@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.sqlite
+.env
+
+# Node
+node_modules/
+dist/
+build/
+**/node_modules/
+
+# IDE
+.vscode/

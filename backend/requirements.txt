@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+ccxt
+aiosqlite
+numpy
+scikit-learn
+pydantic
+xgboost
+lightgbm
+joblib
