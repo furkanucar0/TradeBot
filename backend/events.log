@@ -1,0 +1,281 @@
+{"ts": 1780700962.6370292, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780700963.4569516, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780700963.5635757, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780700964.2826824, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 100.0, "trades": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "win_rate": 0.0, "details": []}}
+{"ts": 1780701005.881868, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780701006.9446833, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780701007.1259637, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780701008.465739, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 100.0, "trades": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "win_rate": 0.0, "details": []}}
+{"ts": 1780701171.663604, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780701172.8389075, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780701173.021756, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780701174.3782108, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 100.0, "trades": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "win_rate": 0.0, "details": []}}
+{"ts": 1780701174.3821304, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780701174.3840458, "phase": "report", "msg": "matplotlib not available; skipping equity curve generation"}
+{"ts": 1780701814.5336356, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780701815.1719072, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780701815.2854946, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780701815.914363, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 100.0, "trades": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "win_rate": 0.0, "details": []}}
+{"ts": 1780701815.9160156, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780701822.3101277, "phase": "report", "msg": "Saved equity curve: equity_curve.png"}
+{"ts": 1780701869.3271022, "phase": "server", "msg": "Event server started on 127.0.0.1:8765"}
+{"ts": 1780701922.4331973, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780701923.4676533, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780701923.6572013, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780701924.9140434, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 100.0, "trades": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "win_rate": 0.0, "details": []}}
+{"ts": 1780701924.9175396, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780701925.8223894, "phase": "report", "msg": "Saved equity curve: equity_curve.png"}
+{"ts": 1780702095.4878364, "phase": "server", "msg": "Event server started on 127.0.0.1:8765"}
+{"ts": 1780702127.4019287, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780702128.5359428, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780702128.7329838, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780702129.985042, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 100.0, "trades": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "win_rate": 0.0, "details": []}}
+{"ts": 1780702129.986758, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780702130.4671123, "phase": "report", "msg": "Saved equity curve: equity_curve.png"}
+{"ts": 1780702575.3693016, "phase": "server", "msg": "Event server started on 127.0.0.1:8765"}
+{"ts": 1780702595.178309, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780702595.879862, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780702595.9818296, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780702596.6788526, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 100.0, "trades": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "win_rate": 0.0, "details": []}}
+{"ts": 1780702596.6807292, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780702597.2090573, "phase": "report", "msg": "Saved equity curve: equity_curve.png"}
+{"ts": 1780702674.3773298, "phase": "server", "msg": "Port 8765 kullanılıyor; event server 127.0.0.1:8766 üzerinde başlatılıyor."}
+{"ts": 1780702674.3840678, "phase": "server", "msg": "Event server started on 127.0.0.1:8766"}
+{"ts": 1780702694.6750345, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780702695.8711488, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780702696.0695817, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780702697.313617, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 100.0, "trades": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "win_rate": 0.0, "details": []}}
+{"ts": 1780702697.3159778, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780702697.8242486, "phase": "report", "msg": "Saved equity curve: equity_curve.png"}
+{"ts": 1780702829.8318708, "phase": "server", "msg": "Port 8765 kullanılıyor; event server 127.0.0.1:8766 üzerinde başlatılıyor."}
+{"ts": 1780702829.8428524, "phase": "server", "msg": "Event server started on 127.0.0.1:8766"}
+{"ts": 1780702833.3875268, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780702834.2216513, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780702834.3289204, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780702834.3310912, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 301.9, "tp_pct": 0.018161110857352572, "capital": 100.0, "available_cash": 90.0}
+{"ts": 1780702834.3331869, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.67, "tp_pct": 0.018685998247989895, "capital": 100.0, "available_cash": 80.0}
+{"ts": 1780702834.334668, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 301.9, "tp_pct": 0.019139381670575398, "capital": 100.0, "available_cash": 70.0}
+{"ts": 1780702834.3369267, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.67, "tp_pct": 0.018512378705597098, "capital": 100.0, "available_cash": 60.0}
+{"ts": 1780702834.3455472, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8685998247989895, "capital": 101.86859982479899}
+{"ts": 1780702834.346707, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8512378705597097, "capital": 103.7198376953587}
+{"ts": 1780702834.3622189, "phase": "trade_close", "result": "TP", "symbol": "BNB/USDT", "pnl": 1.8161110857352571, "capital": 105.53594878109396}
+{"ts": 1780702834.3653212, "phase": "trade_close", "result": "TP", "symbol": "BNB/USDT", "pnl": 1.9139381670575397, "capital": 107.4498869481515}
+{"ts": 1780702834.3783088, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.2, "tp_pct": 0.017840755737046726, "capital": 107.4498869481515, "available_cash": 90.0}
+{"ts": 1780702834.3851278, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.7840755737046725, "capital": 109.23396252185617}
+{"ts": 1780702834.447293, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 303.1, "tp_pct": 0.018846405505214273, "capital": 109.23396252185617, "available_cash": 90.0}
+{"ts": 1780702834.4623516, "phase": "trade_close", "result": "TP", "symbol": "BNB/USDT", "pnl": 1.8846405505214274, "capital": 111.1186030723776}
+{"ts": 1780702834.4801905, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 305.3, "tp_pct": 0.0179148911867386, "capital": 111.1186030723776, "available_cash": 90.0}
+{"ts": 1780702834.4815273, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 304.9, "tp_pct": 0.01793127662617748, "capital": 111.1186030723776, "available_cash": 80.0}
+{"ts": 1780702834.509455, "phase": "trade_close", "result": "SL", "symbol": "BNB/USDT", "pnl": -1.0, "capital": 110.1186030723776}
+{"ts": 1780702834.510789, "phase": "trade_close", "result": "SL", "symbol": "BNB/USDT", "pnl": -1.0, "capital": 109.1186030723776}
+{"ts": 1780702834.514451, "phase": "trade_open", "symbol": "ETH/USDT", "entry": 1562.64, "tp_pct": 0.01789522336535918, "capital": 109.1186030723776, "available_cash": 90.0}
+{"ts": 1780702834.5152571, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.57, "tp_pct": 0.017758532367390986, "capital": 109.1186030723776, "available_cash": 80.0}
+{"ts": 1780702834.5290267, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 303.5, "tp_pct": 0.017620989251464065, "capital": 109.1186030723776, "available_cash": 70.0}
+{"ts": 1780702834.5319393, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 302.9, "tp_pct": 0.018455721905345137, "capital": 109.1186030723776, "available_cash": 60.0}
+{"ts": 1780702834.541177, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.7758532367390987, "capital": 110.89445630911669}
+{"ts": 1780702834.6138668, "phase": "trade_close", "result": "TP", "symbol": "ETH/USDT", "pnl": 1.7895223365359179, "capital": 112.68397864565262}
+{"ts": 1780702834.6324618, "phase": "trade_close", "result": "TP", "symbol": "BNB/USDT", "pnl": 1.8455721905345137, "capital": 114.52955083618713}
+{"ts": 1780702834.638859, "phase": "trade_close", "result": "TP", "symbol": "BNB/USDT", "pnl": 1.7620989251464065, "capital": 116.29164976133353}
+{"ts": 1780702834.650808, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.45, "tp_pct": 0.01789752986301187, "capital": 116.29164976133353, "available_cash": 90.0}
+{"ts": 1780702834.6596892, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 115.29164976133353}
+{"ts": 1780702834.8074894, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.3, "tp_pct": 0.01759767567269435, "capital": 115.29164976133353, "available_cash": 90.0}
+{"ts": 1780702834.8118503, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 114.29164976133353}
+{"ts": 1780702834.8125432, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.07, "tp_pct": 0.01821260534779217, "capital": 114.29164976133353, "available_cash": 90.0}
+{"ts": 1780702834.8136249, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.08, "tp_pct": 0.01790449025597153, "capital": 114.29164976133353, "available_cash": 80.0}
+{"ts": 1780702834.826961, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.13, "tp_pct": 0.01868246822957272, "capital": 114.29164976133353, "available_cash": 70.0}
+{"ts": 1780702834.828738, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.08, "tp_pct": 0.01848721714817972, "capital": 114.29164976133353, "available_cash": 60.0}
+{"ts": 1780702834.8622444, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.821260534779217, "capital": 116.11291029611274}
+{"ts": 1780702834.8638074, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.27, "tp_pct": 0.018902387982229645, "capital": 116.11291029611274, "available_cash": 60.0}
+{"ts": 1780702834.8727298, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.790449025597153, "capital": 117.9033593217099}
+{"ts": 1780702834.8736196, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.868246822957272, "capital": 119.77160614466717}
+{"ts": 1780702834.8741727, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8487217148179718, "capital": 121.62032785948514}
+{"ts": 1780702834.877537, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8902387982229645, "capital": 123.51056665770811}
+{"ts": 1780702834.938457, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 25.3, "tp_pct": 0.01856841797164363, "capital": 123.51056665770811, "available_cash": 90.0}
+{"ts": 1780702834.9399767, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 25.24, "tp_pct": 0.018724357250362547, "capital": 123.51056665770811, "available_cash": 80.0}
+{"ts": 1780702834.941768, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 25.33, "tp_pct": 0.019306180161777983, "capital": 123.51056665770811, "available_cash": 70.0}
+{"ts": 1780702834.9696114, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 25.25, "tp_pct": 0.019007392395853848, "capital": 123.51056665770811, "available_cash": 60.0}
+{"ts": 1780702834.9732904, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 122.51056665770811}
+{"ts": 1780702834.9739866, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 121.51056665770811}
+{"ts": 1780702834.9752357, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 120.51056665770811}
+{"ts": 1780702834.9758306, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 119.51056665770811}
+{"ts": 1780702834.9791505, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.26, "tp_pct": 0.017540513156072822, "capital": 119.51056665770811, "available_cash": 90.0}
+{"ts": 1780702834.9804132, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.1, "tp_pct": 0.018727313615447563, "capital": 119.51056665770811, "available_cash": 80.0}
+{"ts": 1780702834.9816616, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 118.51056665770811}
+{"ts": 1780702834.982685, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.07, "tp_pct": 0.018433885295006794, "capital": 118.51056665770811, "available_cash": 80.0}
+{"ts": 1780702834.9838448, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.0, "tp_pct": 0.017902565056529957, "capital": 118.51056665770811, "available_cash": 70.0}
+{"ts": 1780702834.9849138, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 117.51056665770811}
+{"ts": 1780702834.9854493, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 116.51056665770811}
+{"ts": 1780702834.9859567, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.02, "tp_pct": 0.017766967892433507, "capital": 116.51056665770811, "available_cash": 80.0}
+{"ts": 1780702834.9870918, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 115.51056665770811}
+{"ts": 1780702834.987647, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.0, "tp_pct": 0.018070164090205038, "capital": 115.51056665770811, "available_cash": 80.0}
+{"ts": 1780702834.9889138, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.16, "tp_pct": 0.017637888644890243, "capital": 115.51056665770811, "available_cash": 70.0}
+{"ts": 1780702834.9908915, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.17, "tp_pct": 0.017617476896963698, "capital": 115.51056665770811, "available_cash": 60.0}
+{"ts": 1780702835.000458, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 114.51056665770811}
+{"ts": 1780702835.001147, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 113.51056665770811}
+{"ts": 1780702835.012097, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.7902565056529958, "capital": 115.3008231633611}
+{"ts": 1780702835.0129158, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8070164090205036, "capital": 117.10783957238161}
+{"ts": 1780702835.0353258, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.61, "tp_pct": 0.018395665318306127, "capital": 117.10783957238161, "available_cash": 90.0}
+{"ts": 1780702835.0365527, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 116.10783957238161}
+{"ts": 1780702835.0371294, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.53, "tp_pct": 0.018614834086920228, "capital": 116.10783957238161, "available_cash": 90.0}
+{"ts": 1780702835.039098, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.7, "tp_pct": 0.017620555182270067, "capital": 116.10783957238161, "available_cash": 80.0}
+{"ts": 1780702835.0403605, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.66, "tp_pct": 0.018547725095320655, "capital": 116.10783957238161, "available_cash": 70.0}
+{"ts": 1780702835.041586, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.66, "tp_pct": 0.018530530933923383, "capital": 116.10783957238161, "available_cash": 60.0}
+{"ts": 1780702835.0432258, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 115.10783957238161}
+{"ts": 1780702835.0438678, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 114.10783957238161}
+{"ts": 1780702835.0445924, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 113.10783957238161}
+{"ts": 1780702835.0496132, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.53, "tp_pct": 0.017945189588828882, "capital": 113.10783957238161, "available_cash": 80.0}
+{"ts": 1780702835.0509698, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.62, "tp_pct": 0.018103244873867504, "capital": 113.10783957238161, "available_cash": 70.0}
+{"ts": 1780702835.052311, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.58, "tp_pct": 0.01855253282869185, "capital": 113.10783957238161, "available_cash": 60.0}
+{"ts": 1780702835.065814, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.861483408692023, "capital": 114.96932298107363}
+{"ts": 1780702835.0665252, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.7945189588828883, "capital": 116.76384193995652}
+{"ts": 1780702835.0757623, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8552532828691852, "capital": 118.6190952228257}
+{"ts": 1780702835.0772274, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8103244873867503, "capital": 120.42941971021246}
+{"ts": 1780702835.1366193, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.89, "tp_pct": 0.01837659827192374, "capital": 120.42941971021246, "available_cash": 90.0}
+{"ts": 1780702835.1380038, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.21, "tp_pct": 0.017636724745881648, "capital": 120.42941971021246, "available_cash": 80.0}
+{"ts": 1780702835.1404781, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.837659827192374, "capital": 122.26707953740483}
+{"ts": 1780702835.141262, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.13, "tp_pct": 0.017739334874889472, "capital": 122.26707953740483, "available_cash": 80.0}
+{"ts": 1780702835.1737003, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 121.26707953740483}
+{"ts": 1780702835.1744938, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 120.26707953740483}
+{"ts": 1780702835.1872873, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.16, "tp_pct": 0.017871374353118516, "capital": 120.26707953740483, "available_cash": 90.0}
+{"ts": 1780702835.1888804, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 119.26707953740483}
+{"ts": 1780702835.1896083, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.91, "tp_pct": 0.017811466635940586, "capital": 119.26707953740483, "available_cash": 90.0}
+{"ts": 1780702835.1970565, "phase": "trade_close", "result": "END_WIN", "symbol": "SOL/USDT", "pnl": 0.04182350480970959, "capital": 119.30890304221454}
+{"ts": 1780702835.1978507, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 119.30890304221454, "trades": 44, "wins": 23, "losses": 21, "total_pnl": 19.30890304221454, "win_rate": 0.5227272727272727, "details": [{"open_i": 3, "close_i": 39, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8685998247989895}, {"open_i": 7, "close_i": 39, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8512378705597097}, {"open_i": 0, "close_i": 108, "symbol": "BNB/USDT", "reason": "TP", "pnl": 1.8161110857352571}, {"open_i": 4, "close_i": 116, "symbol": "BNB/USDT", "reason": "TP", "pnl": 1.9139381670575397}, {"open_i": 175, "close_i": 203, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.7840755737046725}, {"open_i": 760, "close_i": 920, "symbol": "BNB/USDT", "reason": "TP", "pnl": 1.8846405505214274}, {"open_i": 1120, "close_i": 1420, "symbol": "BNB/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 1124, "close_i": 1424, "symbol": "BNB/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 1455, "close_i": 1659, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.7758532367390987}, {"open_i": 1454, "close_i": 2130, "symbol": "ETH/USDT", "reason": "TP", "pnl": 1.7895223365359179}, {"open_i": 1600, "close_i": 2236, "symbol": "BNB/USDT", "reason": "TP", "pnl": 1.8455721905345137}, {"open_i": 1588, "close_i": 2268, "symbol": "BNB/USDT", "reason": "TP", "pnl": 1.7620989251464065}, {"open_i": 2375, "close_i": 2443, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 3747, "close_i": 3783, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 3783, "close_i": 4211, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.821260534779217}, {"open_i": 3787, "close_i": 4295, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.790449025597153}, {"open_i": 3871, "close_i": 4295, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.868246822957272}, {"open_i": 3875, "close_i": 4295, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8487217148179718}, {"open_i": 4215, "close_i": 4315, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8902387982229645}, {"open_i": 4963, "close_i": 5267, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 4967, "close_i": 5267, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 4975, "close_i": 5267, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5239, "close_i": 5267, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5295, "close_i": 5303, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5299, "close_i": 5311, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5303, "close_i": 5311, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5311, "close_i": 5315, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5319, "close_i": 5411, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5323, "close_i": 5411, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5307, "close_i": 5515, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.7902565056529958}, {"open_i": 5315, "close_i": 5515, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8070164090205036}, {"open_i": 5751, "close_i": 5755, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5759, "close_i": 5775, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5763, "close_i": 5775, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5767, "close_i": 5775, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5755, "close_i": 5963, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.861483408692023}, {"open_i": 5819, "close_i": 5963, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.7945189588828883}, {"open_i": 5827, "close_i": 6051, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8552532828691852}, {"open_i": 5823, "close_i": 6055, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8103244873867503}, {"open_i": 6635, "close_i": 6659, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.837659827192374}, {"open_i": 6639, "close_i": 6967, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 6659, "close_i": 6967, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 7083, "close_i": 7091, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 7091, "close_i": 7135, "symbol": "SOL/USDT", "reason": "END_WIN", "pnl": 0.04182350480970959}]}}
+{"ts": 1780702835.2001755, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780702835.7169707, "phase": "report", "msg": "Saved equity curve: equity_curve.png"}
+{"ts": 1780703015.651808, "phase": "server", "msg": "Port 8765 kullanılıyor; event server 127.0.0.1:8767 üzerinde başlatılıyor."}
+{"ts": 1780703015.6612198, "phase": "server", "msg": "Event server started on 127.0.0.1:8767"}
+{"ts": 1780703021.1900237, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780703022.4031024, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780703022.5769553, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780703022.5789087, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 301.9, "tp_pct": 0.018161110857352572, "capital": 100.0, "available_cash": 90.0}
+{"ts": 1780703022.5806515, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.67, "tp_pct": 0.018685998247989895, "capital": 100.0, "available_cash": 80.0}
+{"ts": 1780703022.5821574, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 301.9, "tp_pct": 0.019139381670575398, "capital": 100.0, "available_cash": 70.0}
+{"ts": 1780703022.5842628, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.67, "tp_pct": 0.018512378705597098, "capital": 100.0, "available_cash": 60.0}
+{"ts": 1780703022.6006985, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8685998247989895, "capital": 101.86859982479899}
+{"ts": 1780703022.6030354, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8512378705597097, "capital": 103.7198376953587}
+{"ts": 1780703022.6291096, "phase": "trade_close", "result": "TP", "symbol": "BNB/USDT", "pnl": 1.8161110857352571, "capital": 105.53594878109396}
+{"ts": 1780703022.6328146, "phase": "trade_close", "result": "TP", "symbol": "BNB/USDT", "pnl": 1.9139381670575397, "capital": 107.4498869481515}
+{"ts": 1780703022.6491222, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.2, "tp_pct": 0.017840755737046726, "capital": 107.4498869481515, "available_cash": 90.0}
+{"ts": 1780703022.6604033, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.7840755737046725, "capital": 109.23396252185617}
+{"ts": 1780703022.8463826, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 303.1, "tp_pct": 0.018846405505214273, "capital": 109.23396252185617, "available_cash": 90.0}
+{"ts": 1780703022.8878906, "phase": "trade_close", "result": "TP", "symbol": "BNB/USDT", "pnl": 1.8846405505214274, "capital": 111.1186030723776}
+{"ts": 1780703022.9427032, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 305.3, "tp_pct": 0.0179148911867386, "capital": 111.1186030723776, "available_cash": 90.0}
+{"ts": 1780703022.9450054, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 304.9, "tp_pct": 0.01793127662617748, "capital": 111.1186030723776, "available_cash": 80.0}
+{"ts": 1780703023.0147111, "phase": "trade_close", "result": "SL", "symbol": "BNB/USDT", "pnl": -1.0, "capital": 110.1186030723776}
+{"ts": 1780703023.017486, "phase": "trade_close", "result": "SL", "symbol": "BNB/USDT", "pnl": -1.0, "capital": 109.1186030723776}
+{"ts": 1780703023.0237124, "phase": "trade_open", "symbol": "ETH/USDT", "entry": 1562.64, "tp_pct": 0.01789522336535918, "capital": 109.1186030723776, "available_cash": 90.0}
+{"ts": 1780703023.026489, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.57, "tp_pct": 0.017758532367390986, "capital": 109.1186030723776, "available_cash": 80.0}
+{"ts": 1780703023.0536401, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 303.5, "tp_pct": 0.017620989251464065, "capital": 109.1186030723776, "available_cash": 70.0}
+{"ts": 1780703023.0574012, "phase": "trade_open", "symbol": "BNB/USDT", "entry": 302.9, "tp_pct": 0.018455721905345137, "capital": 109.1186030723776, "available_cash": 60.0}
+{"ts": 1780703023.0707378, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.7758532367390987, "capital": 110.89445630911669}
+{"ts": 1780703023.1630971, "phase": "trade_close", "result": "TP", "symbol": "ETH/USDT", "pnl": 1.7895223365359179, "capital": 112.68397864565262}
+{"ts": 1780703023.1821046, "phase": "trade_close", "result": "TP", "symbol": "BNB/USDT", "pnl": 1.8455721905345137, "capital": 114.52955083618713}
+{"ts": 1780703023.189453, "phase": "trade_close", "result": "TP", "symbol": "BNB/USDT", "pnl": 1.7620989251464065, "capital": 116.29164976133353}
+{"ts": 1780703023.2111676, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.45, "tp_pct": 0.01789752986301187, "capital": 116.29164976133353, "available_cash": 90.0}
+{"ts": 1780703023.2248957, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 115.29164976133353}
+{"ts": 1780703023.4667277, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.3, "tp_pct": 0.01759767567269435, "capital": 115.29164976133353, "available_cash": 90.0}
+{"ts": 1780703023.4760208, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 114.29164976133353}
+{"ts": 1780703023.4775395, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.07, "tp_pct": 0.01821260534779217, "capital": 114.29164976133353, "available_cash": 90.0}
+{"ts": 1780703023.4794953, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.08, "tp_pct": 0.01790449025597153, "capital": 114.29164976133353, "available_cash": 80.0}
+{"ts": 1780703023.4988394, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.13, "tp_pct": 0.01868246822957272, "capital": 114.29164976133353, "available_cash": 70.0}
+{"ts": 1780703023.5010478, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.08, "tp_pct": 0.01848721714817972, "capital": 114.29164976133353, "available_cash": 60.0}
+{"ts": 1780703023.5668805, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.821260534779217, "capital": 116.11291029611274}
+{"ts": 1780703023.5695667, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.27, "tp_pct": 0.018902387982229645, "capital": 116.11291029611274, "available_cash": 60.0}
+{"ts": 1780703023.58703, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.790449025597153, "capital": 117.9033593217099}
+{"ts": 1780703023.58855, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.868246822957272, "capital": 119.77160614466717}
+{"ts": 1780703023.5895505, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8487217148179718, "capital": 121.62032785948514}
+{"ts": 1780703023.595825, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8902387982229645, "capital": 123.51056665770811}
+{"ts": 1780703023.7102165, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 25.3, "tp_pct": 0.01856841797164363, "capital": 123.51056665770811, "available_cash": 90.0}
+{"ts": 1780703023.712832, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 25.24, "tp_pct": 0.018724357250362547, "capital": 123.51056665770811, "available_cash": 80.0}
+{"ts": 1780703023.7156334, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 25.33, "tp_pct": 0.019306180161777983, "capital": 123.51056665770811, "available_cash": 70.0}
+{"ts": 1780703023.7678194, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 25.25, "tp_pct": 0.019007392395853848, "capital": 123.51056665770811, "available_cash": 60.0}
+{"ts": 1780703023.7747672, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 122.51056665770811}
+{"ts": 1780703023.7760093, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 121.51056665770811}
+{"ts": 1780703023.7771297, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 120.51056665770811}
+{"ts": 1780703023.7780943, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 119.51056665770811}
+{"ts": 1780703023.7840593, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.26, "tp_pct": 0.017540513156072822, "capital": 119.51056665770811, "available_cash": 90.0}
+{"ts": 1780703023.7860088, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.1, "tp_pct": 0.018727313615447563, "capital": 119.51056665770811, "available_cash": 80.0}
+{"ts": 1780703023.7890754, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 118.51056665770811}
+{"ts": 1780703023.7904239, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.07, "tp_pct": 0.018433885295006794, "capital": 118.51056665770811, "available_cash": 80.0}
+{"ts": 1780703023.7925906, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.0, "tp_pct": 0.017902565056529957, "capital": 118.51056665770811, "available_cash": 70.0}
+{"ts": 1780703023.7956, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 117.51056665770811}
+{"ts": 1780703023.7966979, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 116.51056665770811}
+{"ts": 1780703023.7976532, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.02, "tp_pct": 0.017766967892433507, "capital": 116.51056665770811, "available_cash": 80.0}
+{"ts": 1780703023.799505, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 115.51056665770811}
+{"ts": 1780703023.8007858, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.0, "tp_pct": 0.018070164090205038, "capital": 115.51056665770811, "available_cash": 80.0}
+{"ts": 1780703023.8037393, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.16, "tp_pct": 0.017637888644890243, "capital": 115.51056665770811, "available_cash": 70.0}
+{"ts": 1780703023.8057547, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.17, "tp_pct": 0.017617476896963698, "capital": 115.51056665770811, "available_cash": 60.0}
+{"ts": 1780703023.8259547, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 114.51056665770811}
+{"ts": 1780703023.8271937, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 113.51056665770811}
+{"ts": 1780703023.8468802, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.7902565056529958, "capital": 115.3008231633611}
+{"ts": 1780703023.8481786, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8070164090205036, "capital": 117.10783957238161}
+{"ts": 1780703023.890997, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.61, "tp_pct": 0.018395665318306127, "capital": 117.10783957238161, "available_cash": 90.0}
+{"ts": 1780703023.8961165, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 116.10783957238161}
+{"ts": 1780703023.897614, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.53, "tp_pct": 0.018614834086920228, "capital": 116.10783957238161, "available_cash": 90.0}
+{"ts": 1780703023.9000006, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.7, "tp_pct": 0.017620555182270067, "capital": 116.10783957238161, "available_cash": 80.0}
+{"ts": 1780703023.9021685, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.66, "tp_pct": 0.018547725095320655, "capital": 116.10783957238161, "available_cash": 70.0}
+{"ts": 1780703023.904089, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.66, "tp_pct": 0.018530530933923383, "capital": 116.10783957238161, "available_cash": 60.0}
+{"ts": 1780703023.907333, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 115.10783957238161}
+{"ts": 1780703023.9085011, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 114.10783957238161}
+{"ts": 1780703023.9094326, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 113.10783957238161}
+{"ts": 1780703023.9210958, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.53, "tp_pct": 0.017945189588828882, "capital": 113.10783957238161, "available_cash": 80.0}
+{"ts": 1780703023.923712, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.62, "tp_pct": 0.018103244873867504, "capital": 113.10783957238161, "available_cash": 70.0}
+{"ts": 1780703023.9264014, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.58, "tp_pct": 0.01855253282869185, "capital": 113.10783957238161, "available_cash": 60.0}
+{"ts": 1780703023.9593074, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.861483408692023, "capital": 114.96932298107363}
+{"ts": 1780703023.9617546, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.7945189588828883, "capital": 116.76384193995652}
+{"ts": 1780703023.982353, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8552532828691852, "capital": 118.6190952228257}
+{"ts": 1780703023.9850688, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.8103244873867503, "capital": 120.42941971021246}
+{"ts": 1780703024.0933492, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.89, "tp_pct": 0.01837659827192374, "capital": 120.42941971021246, "available_cash": 90.0}
+{"ts": 1780703024.0961459, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.21, "tp_pct": 0.017636724745881648, "capital": 120.42941971021246, "available_cash": 80.0}
+{"ts": 1780703024.1016595, "phase": "trade_close", "result": "TP", "symbol": "SOL/USDT", "pnl": 1.837659827192374, "capital": 122.26707953740483}
+{"ts": 1780703024.102987, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.13, "tp_pct": 0.017739334874889472, "capital": 122.26707953740483, "available_cash": 80.0}
+{"ts": 1780703024.1617749, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 121.26707953740483}
+{"ts": 1780703024.1633434, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 120.26707953740483}
+{"ts": 1780703024.1865795, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 24.16, "tp_pct": 0.017871374353118516, "capital": 120.26707953740483, "available_cash": 90.0}
+{"ts": 1780703024.1896973, "phase": "trade_close", "result": "SL", "symbol": "SOL/USDT", "pnl": -1.0, "capital": 119.26707953740483}
+{"ts": 1780703024.1908588, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.91, "tp_pct": 0.017811466635940586, "capital": 119.26707953740483, "available_cash": 90.0}
+{"ts": 1780703024.205069, "phase": "trade_close", "result": "END_WIN", "symbol": "SOL/USDT", "pnl": 0.04182350480970959, "capital": 119.30890304221454}
+{"ts": 1780703024.206741, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 119.30890304221454, "trades": 44, "wins": 23, "losses": 21, "total_pnl": 19.30890304221454, "win_rate": 0.5227272727272727, "details": [{"open_i": 3, "close_i": 39, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8685998247989895}, {"open_i": 7, "close_i": 39, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8512378705597097}, {"open_i": 0, "close_i": 108, "symbol": "BNB/USDT", "reason": "TP", "pnl": 1.8161110857352571}, {"open_i": 4, "close_i": 116, "symbol": "BNB/USDT", "reason": "TP", "pnl": 1.9139381670575397}, {"open_i": 175, "close_i": 203, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.7840755737046725}, {"open_i": 760, "close_i": 920, "symbol": "BNB/USDT", "reason": "TP", "pnl": 1.8846405505214274}, {"open_i": 1120, "close_i": 1420, "symbol": "BNB/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 1124, "close_i": 1424, "symbol": "BNB/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 1455, "close_i": 1659, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.7758532367390987}, {"open_i": 1454, "close_i": 2130, "symbol": "ETH/USDT", "reason": "TP", "pnl": 1.7895223365359179}, {"open_i": 1600, "close_i": 2236, "symbol": "BNB/USDT", "reason": "TP", "pnl": 1.8455721905345137}, {"open_i": 1588, "close_i": 2268, "symbol": "BNB/USDT", "reason": "TP", "pnl": 1.7620989251464065}, {"open_i": 2375, "close_i": 2443, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 3747, "close_i": 3783, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 3783, "close_i": 4211, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.821260534779217}, {"open_i": 3787, "close_i": 4295, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.790449025597153}, {"open_i": 3871, "close_i": 4295, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.868246822957272}, {"open_i": 3875, "close_i": 4295, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8487217148179718}, {"open_i": 4215, "close_i": 4315, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8902387982229645}, {"open_i": 4963, "close_i": 5267, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 4967, "close_i": 5267, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 4975, "close_i": 5267, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5239, "close_i": 5267, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5295, "close_i": 5303, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5299, "close_i": 5311, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5303, "close_i": 5311, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5311, "close_i": 5315, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5319, "close_i": 5411, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5323, "close_i": 5411, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5307, "close_i": 5515, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.7902565056529958}, {"open_i": 5315, "close_i": 5515, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8070164090205036}, {"open_i": 5751, "close_i": 5755, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5759, "close_i": 5775, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5763, "close_i": 5775, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5767, "close_i": 5775, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 5755, "close_i": 5963, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.861483408692023}, {"open_i": 5819, "close_i": 5963, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.7945189588828883}, {"open_i": 5827, "close_i": 6051, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8552532828691852}, {"open_i": 5823, "close_i": 6055, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.8103244873867503}, {"open_i": 6635, "close_i": 6659, "symbol": "SOL/USDT", "reason": "TP", "pnl": 1.837659827192374}, {"open_i": 6639, "close_i": 6967, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 6659, "close_i": 6967, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 7083, "close_i": 7091, "symbol": "SOL/USDT", "reason": "SL", "pnl": -1.0}, {"open_i": 7091, "close_i": 7135, "symbol": "SOL/USDT", "reason": "END_WIN", "pnl": 0.04182350480970959}]}}
+{"ts": 1780703024.2101536, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780703025.1569173, "phase": "report", "msg": "Saved equity curve: equity_curve.png"}
+{"ts": 1780704041.6043456, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780704042.2366884, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780704042.339434, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780704042.341605, "phase": "trade_open", "symbol": "BTC/USDT", "entry": 22724.36, "tp_pct": 0.05, "capital": 99.9, "available_cash": 0.0}
+{"ts": 1780704042.7974799, "phase": "trade_close", "result": "TP", "symbol": "BTC/USDT", "pnl": 4.9, "capital": 104.80000000000001}
+{"ts": 1780704042.9162424, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.53, "tp_pct": 0.05, "capital": 104.70000000000002, "available_cash": 0.0}
+{"ts": 1780704043.0550673, "phase": "trade_close", "result": "END_WIN", "symbol": "SOL/USDT", "pnl": 1.557458563535914, "capital": 106.25745856353593}
+{"ts": 1780704043.0559466, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 106.25745856353593, "trades": 2, "wins": 2, "losses": 0, "total_pnl": 6.257458563535934, "win_rate": 1.0, "details": [{"open_i": 1, "close_i": 4613, "symbol": "BTC/USDT", "reason": "TP", "pnl": 5.0}, {"open_i": 5755, "close_i": 7135, "symbol": "SOL/USDT", "reason": "END_WIN", "pnl": 1.557458563535914}]}}
+{"ts": 1780704043.0574636, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780704043.6188319, "phase": "report", "msg": "Saved equity curve: equity_curve.png"}
+{"ts": 1780704101.6587422, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780704102.2995882, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780704102.3925211, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780704102.3937585, "phase": "trade_open", "symbol": "BTC/USDT", "entry": 22724.36, "tp_pct": 0.05, "capital": 99.9, "available_cash": 0.0}
+{"ts": 1780704102.8309777, "phase": "trade_close", "result": "TP", "symbol": "BTC/USDT", "pnl": 4.9, "capital": 104.80000000000001}
+{"ts": 1780704102.9374323, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.53, "tp_pct": 0.05, "capital": 104.70000000000002, "available_cash": 0.0}
+{"ts": 1780704103.072799, "phase": "trade_close", "result": "END_WIN", "symbol": "SOL/USDT", "pnl": 1.557458563535914, "capital": 106.25745856353593}
+{"ts": 1780704103.074398, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 106.25745856353593, "trades": 2, "wins": 2, "losses": 0, "total_pnl": 6.257458563535934, "win_rate": 1.0, "details": [{"open_i": 1, "close_i": 4613, "symbol": "BTC/USDT", "reason": "TP", "pnl": 5.0}, {"open_i": 5755, "close_i": 7135, "symbol": "SOL/USDT", "reason": "END_WIN", "pnl": 1.557458563535914}]}}
+{"ts": 1780704103.0761302, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780704103.538608, "phase": "report", "msg": "Saved equity curve: equity_curve.png"}
+{"ts": 1780704235.1807516, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780704235.8450637, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780704235.9466562, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780704235.9489903, "phase": "trade_open", "symbol": "BTC/USDT", "entry": 22724.36, "tp_pct": 0.05, "capital": 99.9, "available_cash": 0.0}
+{"ts": 1780704236.431483, "phase": "trade_close", "result": "TP", "symbol": "BTC/USDT", "pnl": 4.9, "capital": 104.80000000000001}
+{"ts": 1780704236.5487306, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.53, "tp_pct": 0.05, "capital": 104.70000000000002, "available_cash": 0.0}
+{"ts": 1780704236.6953018, "phase": "trade_close", "result": "END_WIN", "symbol": "SOL/USDT", "pnl": 1.557458563535914, "capital": 106.25745856353593}
+{"ts": 1780704236.6961994, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 106.25745856353593, "trades": 2, "wins": 2, "losses": 0, "total_pnl": 6.257458563535934, "win_rate": 1.0, "details": [{"open_i": 1, "close_i": 4613, "symbol": "BTC/USDT", "reason": "TP", "pnl": 5.0}, {"open_i": 5755, "close_i": 7135, "symbol": "SOL/USDT", "reason": "END_WIN", "pnl": 1.557458563535914}]}}
+{"ts": 1780704236.6976242, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780704237.2297592, "phase": "report", "msg": "Saved equity curve: equity_curve.png"}
+{"ts": 1780704416.1535559, "phase": "training", "msg": "Model training started", "progress": 5}
+{"ts": 1780704417.321229, "phase": "training", "msg": "Model training finished", "progress": 90}
+{"ts": 1780704417.5078712, "phase": "backtest", "msg": "Backtest starting", "progress": 92}
+{"ts": 1780704417.510303, "phase": "trade_open", "symbol": "BTC/USDT", "entry": 22724.36, "tp_pct": 0.05, "capital": 99.9, "available_cash": 0.0}
+{"ts": 1780704418.3174655, "phase": "trade_close", "result": "TP", "symbol": "BTC/USDT", "pnl": 4.9, "capital": 104.80000000000001}
+{"ts": 1780704418.5711596, "phase": "trade_open", "symbol": "SOL/USDT", "entry": 23.53, "tp_pct": 0.05, "capital": 104.70000000000002, "available_cash": 0.0}
+{"ts": 1780704418.8178494, "phase": "trade_close", "result": "END_WIN", "symbol": "SOL/USDT", "pnl": 1.557458563535914, "capital": 106.25745856353593}
+{"ts": 1780704418.8207219, "phase": "backtest", "msg": "Backtest finished", "summary": {"starting_cap": 100.0, "final_cap": 106.25745856353593, "trades": 2, "wins": 2, "losses": 0, "total_pnl": 6.257458563535934, "win_rate": 1.0, "details": [{"open_i": 1, "close_i": 4613, "symbol": "BTC/USDT", "reason": "TP", "pnl": 5.0}, {"open_i": 5755, "close_i": 7135, "symbol": "SOL/USDT", "reason": "END_WIN", "pnl": 1.557458563535914}]}}
+{"ts": 1780704418.8233087, "phase": "report", "msg": "Saved backtest summary: backtest_summary.json"}
+{"ts": 1780704419.6457212, "phase": "report", "msg": "Saved equity curve: equity_curve.png"}

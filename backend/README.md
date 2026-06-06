@@ -12,6 +12,8 @@ Bu dizin FastAPI tabanlı backend servisini ve bot altyapısını içerir.
 - `backend/app/api.py`: FastAPI servisleri, WebSocket yayınları, bot start/stop fonksiyonları ve durum endpointleri.
 - `backend/run.py`: Uvicorn ile backend sunucusunu başlatmak için çalıştırılabilir script.
 - `backend/requirements.txt`: Backend için gerekli Python paketleri.
+- `backend/zip_loader.py`: Yerel `.zip` dosyalarından tarihsel OHLCV verisini SQLite'a yükleyen ETL aracı.
+- `backend/zips/`: Local ZIP dosyalarını yerleştireceğiniz klasör.
 
 ## Kurulum
 
@@ -26,6 +28,17 @@ Bu dizin FastAPI tabanlı backend servisini ve bot altyapısını içerir.
 - `python run.py`
 
 Servis `http://localhost:8000` üzerinde çalışacaktır.
+
+## Yerel ZIP veri yükleme
+
+- `backend/zip_loader.py` dosyasını çalıştırmak için ZIP dosyalarını `backend/zips/` klasörüne yerleştirin.
+- Dosya adı formatı örneği: `BTCUSDT-5m-2024-06.zip`
+- ZIP içinde en az bir CSV olmalı; CSV sütunları `timestamp`, `open`, `high`, `low`, `close`, `volume` veya eşdeğer başlıklar içerebilir.
+- Çalıştırmak için:
+  - `cd backend`
+  - `./run_zip_loader.ps1`
+  - veya `./run_zip_loader.bat`
+  - Eğer bu betikleri kullanmazsanız, doğru venv ile çalıştırmak için `../.venv/Scripts/python.exe zip_loader.py` komutunu kullanın.
 
 ## Notlar
 

@@ -44,14 +44,21 @@ Uygulama `http://localhost:8000` adresinde çalışacaktır.
 ### Ayrı PowerShell pencerelerinde çalıştırma
 
 1. Bir PowerShell penceresinde:
-   - `.
-un-backend.ps1`
+   - `./run-backend.ps1`
 2. Diğer PowerShell penceresinde:
-   - `.
-un-frontend.ps1`
+   - `./run-frontend.ps1`
 
 Backend konsolunda FastAPI ve bot döngüsü loglarını göreceksiniz.
 Frontend tarayıcı ekranında canlı durum güncellemelerini ve web socket tabanlı log akışını izleyebilirsiniz.
+
+## Yerel ZIP veri yükleme
+
+- `backend/zip_loader.py` ile `backend/zips/` klasöründeki `.zip` dosyalarını SQLite veritabanına aktarabilirsiniz.
+- ZIP dosya adı formatı örneği: `BTCUSDT-5m-2024-06.zip`
+- Her ZIP içinde en az bir CSV olmalı. CSV sütunları `timestamp`, `open`, `high`, `low`, `close`, `volume` veya eşdeğer başlıklar içermelidir.
+- Çalıştırmak için:
+  - `cd backend`
+  - `python zip_loader.py`
 
 ## Notlar
 

@@ -1,0 +1,25 @@
+{
+  "starting_cap": 100.0,
+  "final_cap": 106.25745856353593,
+  "trades": 2,
+  "wins": 2,
+  "losses": 0,
+  "total_pnl": 6.257458563535934,
+  "win_rate": 1.0,
+  "details": [
+    {
+      "open_i": 1,
+      "close_i": 4613,
+      "symbol": "BTC/USDT",
+      "reason": "TP",
+      "pnl": 5.0
+    },
+    {
+      "open_i": 5755,
+      "close_i": 7135,
+      "symbol": "SOL/USDT",
+      "reason": "END_WIN",
+      "pnl": 1.557458563535914
+    }
+  ]
+}
