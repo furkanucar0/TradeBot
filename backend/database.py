@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS trades (
     exit_ts INTEGER,
     exit_reason TEXT,
     pnl_usdt REAL,
-    status TEXT NOT NULL DEFAULT 'open'
+    status TEXT NOT NULL DEFAULT 'open',
+    paper INTEGER DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS model_runs (
@@ -94,6 +95,11 @@ class Database:
             stmt = stmt.strip()
             if stmt:
                 await self.conn.execute(stmt)
+        # Migration: eski DB'ye paper kolonu ekle
+        try:
+            await self.conn.execute("ALTER TABLE trades ADD COLUMN paper INTEGER DEFAULT 1")
+        except Exception:
+            pass  # zaten var
         await self.conn.commit()
 
     async def close(self) -> None:
@@ -132,8 +138,8 @@ class Database:
     async def insert_trade(self, trade: Dict[str, Any]) -> int:
         assert self.conn is not None
         cursor = await self.conn.execute(
-            """INSERT INTO trades (symbol, side, leverage, entry_price, quantity_usdt, notional, entry_ts, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 'open')""",
+            """INSERT INTO trades (symbol, side, leverage, entry_price, quantity_usdt, notional, entry_ts, status, paper)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)""",
             (
                 trade["symbol"],
                 trade["side"],
@@ -142,6 +148,7 @@ class Database:
                 trade["quantity_usdt"],
                 trade["notional"],
                 trade["entry_ts"],
+                1 if trade.get("paper", True) else 0,
             ),
         )
         await self.conn.commit()
@@ -161,10 +168,31 @@ class Database:
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
-    async def fetch_trades(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    async def fetch_trades(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        since_ms: int = 0,
+        until_ms: int = 0,
+        paper: Optional[bool] = None,
+        status: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         assert self.conn is not None
+        conditions = []
+        params: list = []
+        if since_ms > 0:
+            conditions.append("entry_ts >= ?"); params.append(since_ms)
+        if until_ms > 0:
+            conditions.append("entry_ts <= ?"); params.append(until_ms)
+        if paper is not None:
+            conditions.append("paper = ?"); params.append(1 if paper else 0)
+        if status:
+            conditions.append("status = ?"); params.append(status)
+        where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        params += [limit, offset]
         cursor = await self.conn.execute(
-            "SELECT * FROM trades ORDER BY entry_ts DESC LIMIT ? OFFSET ?", (limit, offset)
+            f"SELECT * FROM trades {where} ORDER BY entry_ts DESC LIMIT ? OFFSET ?",
+            params,
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]

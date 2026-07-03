@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import type { SeriesMarker, Time } from 'lightweight-charts'
+import CandleChart from './CandleChart'
 import ModelMetrics from './ModelMetrics'
-import PositionsPanel from './PositionsPanel'
 import TradeHistory from './TradeHistory'
 import {
   fetchBacktest, fetchStatus, startBot, stopBot, triggerTrain,
@@ -19,6 +20,17 @@ type LogLevel = 'info' | 'system' | 'trade_open' | 'profit' | 'loss' | 'error' |
 interface LogEntry { ts: number; level: LogLevel; msg: string }
 interface ProgressState { msg: string; pct: number }
 interface GridRow { sl: number; tp: number; wr: number; rr: number }
+interface WalletState {
+  balance: number; start: number; pnl: number; pnl_pct: number;
+  open_count: number; trade_count: number; unrealized?: number;
+}
+
+interface LivePosition {
+  symbol: string; side: string; entry: number; current_price: number;
+  tp: number; sl: number; upnl: number; upnl_pct: number;
+  open_ts?: number; proba?: number; db_id?: number;
+  margin?: number; notional?: number; leverage?: number;
+}
 
 function logColor(l: LogLevel) {
   if (l === 'profit') return 'text-green-400 bg-green-900/20 border-green-800'
@@ -39,6 +51,11 @@ export default function LiveDashboard() {
   const [gridRows, setGridRows] = useState<GridRow[]>([])
   const [activeTab, setActiveTab] = useState<'log' | 'grid'>('log')
   const [testnet, setTestnet] = useState(true)
+  const [wallet, setWallet] = useState<WalletState | null>(null)
+  const [livePositions, setLivePositions] = useState<LivePosition[]>([])
+  const [botStartTs, setBotStartTs] = useState(0)
+  const [chartSymbol, setChartSymbol] = useState<'BTC' | 'ETH'>('BTC')
+  const [tradeMarkers, setTradeMarkers] = useState<Record<'BTC' | 'ETH', SeriesMarker<Time>[]>>({ BTC: [], ETH: [] })
   const logsRef = useRef<HTMLDivElement>(null)
 
   // Status polling
@@ -68,10 +85,24 @@ export default function LiveDashboard() {
     const pushLog = (level: LogLevel, msg: string) =>
       setLogs(prev => [{ ts: Date.now(), level, msg }, ...prev].slice(0, 500))
 
+    // İşlem olaylarını grafikte marker olarak göster
+    const pushMarker = (symbol: string | undefined, marker: SeriesMarker<Time>) => {
+      const key = symbol?.startsWith('BTC') ? 'BTC' : symbol?.startsWith('ETH') ? 'ETH' : null
+      if (!key) return
+      setTradeMarkers(prev => ({ ...prev, [key]: [...prev[key], marker].slice(-100) }))
+    }
+    const evMinute = (ev: Record<string, any>): Time =>
+      (Math.floor((ev.ts ?? Date.now() / 1000) / 60) * 60) as Time
+
     const handleEvent = (ev: Record<string, any>) => {
       const phase = ev.phase as string | undefined
 
-      if (phase === 'grid_search') {
+      if (phase === 'bot_start') {
+        setBotStartTs(ev.ts as number)
+        setLivePositions([])
+      } else if (phase === 'positions') {
+        setLivePositions(ev.positions ?? [])
+      } else if (phase === 'grid_search') {
         setProgress({ msg: ev.msg || 'Grid search...', pct: ev.progress || 15 })
         if (ev.sl_pct !== undefined) {
           setGridRows(prev => [
@@ -95,13 +126,54 @@ export default function LiveDashboard() {
         setProgress({ msg: ev.msg || 'Tamamlandı', pct: 100 })
         if (ev.summary) setSummary(ev.summary)
         fetchStatus().then(setStatus).catch(() => null)
+        // Eğitim bitti → backtest metriklerini ve equity grafiğini güncelle
+        fetchBacktest()
+          .then(d => {
+            setSummary(d)
+            setEquityUrl(`${API_BASE}/reports/equity_curve.png?t=${Date.now()}`)
+          })
+          .catch(() => null)
+      } else if (phase === 'signal') {
+        if (ev.pred === 1) {
+          const obStr  = ev.ob_imbalance !== undefined ? ` | OB=${ev.ob_imbalance > 0 ? '+' : ''}${ev.ob_imbalance.toFixed(2)}` : ''
+          const fngStr = ev.fng !== undefined ? ` | F&G=${ev.fng}` : ''
+          pushLog('signal', `${ev.symbol} ${ev.direction ?? ''} SİNYAL p=${(ev.proba * 100).toFixed(1)}%${obStr}${fngStr} @ ${ev.price ?? ''}`)
+        }
+      } else if (phase === 'wallet') {
+        setWallet({
+          balance:     ev.balance,
+          start:       ev.start,
+          pnl:         ev.pnl,
+          pnl_pct:     ev.pnl_pct,
+          open_count:  ev.open_count,
+          trade_count: ev.trade_count,
+          unrealized:  ev.unrealized,
+        })
       } else if (phase === 'trade_open') {
-        pushLog('trade_open', `${ev.symbol} LONG AÇILDI @ ${ev.entry} | SL=${ev.sl} TP=${ev.tp}`)
+        pushLog('trade_open', `${ev.symbol} ${ev.side || 'LONG'} AÇILDI @ ${ev.entry} | SL=${ev.sl} TP=${ev.tp}${ev.paper ? ' [PAPER]' : ''}`)
+        pushMarker(ev.symbol, {
+          time: evMinute(ev),
+          position: 'belowBar',
+          shape: ev.side === 'SHORT' ? 'arrowDown' : 'arrowUp',
+          color: ev.side === 'SHORT' ? '#ef4444' : '#22c55e',
+          text: `${ev.side ?? 'LONG'}`,
+        })
       } else if (phase === 'trade_close') {
         const lvl = ev.result === 'TP' ? 'profit' : 'loss'
-        pushLog(lvl, `${ev.symbol} KAPANDI [${ev.result}] PnL=${ev.pnl >= 0 ? '+' : ''}${Number(ev.pnl).toFixed(4)} USDT`)
-      } else if (phase === 'signal') {
-        if (ev.pred === 1) pushLog('signal', `${ev.symbol} SİNYAL p=${(ev.proba * 100).toFixed(1)}%`)
+        const pctStr = ev.pnl_pct !== undefined ? ` (${ev.pnl_pct >= 0 ? '+' : ''}${Number(ev.pnl_pct).toFixed(2)}%)` : ''
+        pushLog(lvl, `${ev.symbol} KAPANDI [${ev.result}]${ev.paper ? ' [PAPER]' : ''} ${ev.pnl >= 0 ? '+' : ''}${Number(ev.pnl).toFixed(4)} USDT${pctStr}`)
+        pushMarker(ev.symbol, {
+          time: evMinute(ev),
+          position: 'aboveBar',
+          shape: 'circle',
+          color: ev.result === 'TP' ? '#22c55e' : ev.result === 'SL' ? '#ef4444' : '#eab308',
+          text: `${ev.result} ${ev.pnl >= 0 ? '+' : ''}${Number(ev.pnl).toFixed(2)}`,
+        })
+      } else if (phase === 'trade_analysis') {
+        const wrStr = `Son ${ev.rolling_n} işlem WR: ${(ev.rolling_wr * 100).toFixed(0)}%`
+        const probaStr = `Sinyal gücü: ${(ev.proba * 100).toFixed(1)}%`
+        const verdict = ev.correct ? '✓ Doğru tahmin' : '✗ Yanlış tahmin'
+        pushLog('info', `ANALİZ ${ev.symbol} — ${verdict} | ${probaStr} | ${wrStr} | Ort sinyal: ${(ev.avg_proba * 100).toFixed(1)}%`)
       } else if (phase === 'error') {
         pushLog('error', ev.msg || 'Hata')
       } else if (phase === 'server') {
@@ -111,14 +183,18 @@ export default function LiveDashboard() {
       }
     }
 
+    let alive = true   // StrictMode çift mount'unu önler
+
     const connect = () => {
+      if (!alive) return
       const host = WS_HOSTS[hostIdx % WS_HOSTS.length]
       hostIdx++
       ws = new WebSocket(host + '/ws')
-      ws.onopen = () => pushLog('system', `WS bağlandı: ${host}`)
-      ws.onmessage = e => { try { handleEvent(JSON.parse(e.data)) } catch { } }
+      ws.onopen = () => { if (alive) pushLog('system', `WS bağlandı: ${host}`) }
+      ws.onmessage = e => { try { if (alive) handleEvent(JSON.parse(e.data)) } catch { } }
       ws.onerror = () => { ws?.close() }
       ws.onclose = () => {
+        if (!alive) return
         pushLog('system', 'WS kapandı, yeniden bağlanılıyor...')
         retryTimer = setTimeout(connect, 3000)
       }
@@ -126,6 +202,7 @@ export default function LiveDashboard() {
 
     connect()
     return () => {
+      alive = false
       ws?.close()
       clearTimeout(retryTimer)
     }
@@ -178,9 +255,17 @@ export default function LiveDashboard() {
         <button
           onClick={handleStart}
           disabled={status?.is_running || !status?.model_exists}
-          className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-sm font-medium transition"
+          className={`px-4 py-2 rounded-lg disabled:opacity-40 text-sm font-medium transition ${
+            testnet
+              ? 'bg-teal-700 hover:bg-teal-600'
+              : 'bg-emerald-600 hover:bg-emerald-500'
+          }`}
         >
-          Botu Başlat
+          {status?.is_running
+            ? 'Çalışıyor...'
+            : testnet
+              ? 'Paper Test Başlat'
+              : 'Canlı Trade Başlat'}
         </button>
 
         <button
@@ -191,24 +276,55 @@ export default function LiveDashboard() {
           Durdur
         </button>
 
-        <label className="flex items-center gap-2 text-sm cursor-pointer select-none ml-2">
-          <input
-            type="checkbox"
-            checked={testnet}
-            onChange={e => setTestnet(e.target.checked)}
-            className="accent-indigo-500"
-          />
-          <span className={testnet ? 'text-yellow-300' : 'text-red-400 font-semibold'}>
-            {testnet ? 'Testnet' : '⚠️ Mainnet'}
+        {/* Mod seçici */}
+        <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs font-medium ml-1">
+          <button
+            onClick={() => setTestnet(true)}
+            className={`px-3 py-2 transition ${testnet ? 'bg-teal-700 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+          >
+            Paper
+          </button>
+          <button
+            onClick={() => setTestnet(false)}
+            className={`px-3 py-2 transition ${!testnet ? 'bg-red-700 text-white' : 'bg-slate-800 text-slate-400 hover:bg-slate-700'}`}
+          >
+            Canlı
+          </button>
+        </div>
+        {!testnet && (
+          <span className="text-red-400 text-xs font-semibold animate-pulse">
+            ⚠ GERÇEK PARA
           </span>
-        </label>
+        )}
 
-        <div className="ml-auto flex flex-wrap gap-3 text-xs text-slate-400">
-          <span>Açık Poz: <strong className="text-white">{status?.open_positions ?? '—'}</strong></span>
+        <div className="ml-auto flex flex-wrap items-center gap-3 text-xs text-slate-400">
+          {/* Demo Kasa */}
+          {wallet && testnet && (
+            <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-xl px-3 py-1.5">
+              <span className="text-slate-400">Demo:</span>
+              <span className="font-mono font-bold text-white text-sm">
+                {wallet.balance.toFixed(2)} USDT
+              </span>
+              <span className={`font-mono text-xs ${wallet.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {wallet.pnl >= 0 ? '+' : ''}{wallet.pnl.toFixed(2)} ({wallet.pnl_pct >= 0 ? '+' : ''}{wallet.pnl_pct.toFixed(1)}%)
+              </span>
+              {wallet.unrealized !== undefined && wallet.open_count > 0 && (
+                <span className={`font-mono text-xs opacity-70 ${wallet.unrealized >= 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
+                  [{wallet.unrealized >= 0 ? '+' : ''}{wallet.unrealized.toFixed(2)}]
+                </span>
+              )}
+              <span className="text-slate-500">{wallet.trade_count} işlem</span>
+            </div>
+          )}
+
+          <span>Poz: <strong className="text-white">{wallet?.open_count ?? status?.open_positions ?? '—'}</strong></span>
           <span>WR: <strong className={ready ? 'text-green-400' : 'text-yellow-400'}>{status?.last_win_rate != null ? `${(status.last_win_rate * 100).toFixed(1)}%` : '—'}</strong></span>
           <span>R:R: <strong className={ready ? 'text-green-400' : 'text-yellow-400'}>{status?.last_rr?.toFixed(2) ?? '—'}</strong></span>
-          {ready && <span className="text-green-400 font-semibold">✓ Canlı Trade Hazır</span>}
-          {!ready && status?.model_exists && <span className="text-yellow-400">Kriter bekleniyor (WR&gt;60% + R:R&gt;2.0)</span>}
+          {ready && <span className="text-green-400 font-semibold">✓ Hazır</span>}
+          {!ready && status?.model_exists && <span className="text-yellow-400">Kriter bekleniyor</span>}
+          <span className={`px-2 py-0.5 rounded text-xs font-medium ${testnet ? 'bg-teal-900 text-teal-300' : 'bg-red-900 text-red-300'}`}>
+            {testnet ? 'PAPER' : 'CANLI'}
+          </span>
         </div>
       </div>
 
@@ -224,6 +340,31 @@ export default function LiveDashboard() {
             style={{ width: `${Math.min(Math.max(progress.pct, 0), 100)}%` }}
           />
         </div>
+      </div>
+
+      {/* ── Canlı Grafik ─────────────────────────────────────────────── */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+        <div className="flex items-center justify-between mb-3 border-b border-slate-800 pb-2">
+          <div className="text-sm font-medium text-white">
+            Canlı Grafik <span className="text-xs text-slate-500 ml-1">1m · işlem markerları</span>
+          </div>
+          <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs font-medium">
+            {(['BTC', 'ETH'] as const).map(s => (
+              <button
+                key={s}
+                onClick={() => setChartSymbol(s)}
+                className={`px-3 py-1.5 transition ${
+                  chartSymbol === s
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                }`}
+              >
+                {s}/USDT
+              </button>
+            ))}
+          </div>
+        </div>
+        <CandleChart symbol={chartSymbol} markers={tradeMarkers[chartSymbol]} startTs={botStartTs} />
       </div>
 
       {/* ── Ana Grid (Log + Model Metrics) ───────────────────────────── */}
@@ -300,14 +441,140 @@ export default function LiveDashboard() {
         </div>
       </div>
 
-      {/* ── Alt Grid (Positions + Trade History) ─────────────────────── */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      {/* ── Demo Kasa Kartı + Alt Grid ───────────────────────────────── */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
 
+        {/* Demo Kasa Detay */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
-          <div className="text-sm font-medium text-white mb-4 border-b border-slate-800 pb-2">Açık Pozisyonlar</div>
-          <PositionsPanel />
+          <div className="text-sm font-medium text-white mb-4 border-b border-slate-800 pb-2">
+            Demo Kasa {testnet && <span className="text-teal-400 text-xs ml-1">PAPER</span>}
+          </div>
+          {wallet ? (
+            <div className="space-y-3">
+              <div className="flex justify-between items-baseline">
+                <span className="text-slate-400 text-sm">Bakiye</span>
+                <span className="font-mono text-xl font-bold text-white">{wallet.balance.toFixed(2)} USDT</span>
+              </div>
+              <div className="flex justify-between items-baseline">
+                <span className="text-slate-400 text-sm">Net P&L</span>
+                <span className={`font-mono text-lg font-semibold ${wallet.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {wallet.pnl >= 0 ? '+' : ''}{wallet.pnl.toFixed(2)} USDT
+                </span>
+              </div>
+              {wallet.unrealized !== undefined && wallet.open_count > 0 && (
+                <div className="flex justify-between items-baseline">
+                  <span className="text-slate-400 text-sm">Açık Kar/Zarar</span>
+                  <span className={`font-mono text-sm ${wallet.unrealized >= 0 ? 'text-emerald-400' : 'text-orange-400'}`}>
+                    {wallet.unrealized >= 0 ? '+' : ''}{wallet.unrealized.toFixed(2)} USDT
+                  </span>
+                </div>
+              )}
+              <div className="flex justify-between items-baseline">
+                <span className="text-slate-400 text-sm">Getiri</span>
+                <span className={`font-mono font-semibold ${wallet.pnl_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {wallet.pnl_pct >= 0 ? '+' : ''}{wallet.pnl_pct.toFixed(2)}%
+                </span>
+              </div>
+              <div className="flex justify-between text-xs text-slate-500 pt-2 border-t border-slate-800">
+                <span>Açık: {wallet.open_count}</span>
+                <span>Toplam: {wallet.trade_count} işlem</span>
+                <span>Başlangıç: {wallet.start} USDT</span>
+              </div>
+            </div>
+          ) : (
+            <div className="text-slate-500 text-sm text-center py-8">
+              <div className="text-2xl mb-2">💼</div>
+              <div>Paper test başlatınca</div>
+              <div>kasa burada görünür</div>
+              <div className="mt-3 font-mono text-slate-600">100 USDT ile başlar</div>
+            </div>
+          )}
         </div>
 
+        {/* Açık Pozisyonlar — anlık WS verisi */}
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
+          <div className="text-sm font-medium text-white mb-4 border-b border-slate-800 pb-2">
+            Açık Pozisyonlar
+            {livePositions.length > 0 && (
+              <span className="ml-2 text-xs text-teal-400">{livePositions.length} açık</span>
+            )}
+          </div>
+          {livePositions.length === 0 ? (
+            <div className="text-slate-500 text-sm text-center py-8">Açık pozisyon yok</div>
+          ) : (
+            <div className="space-y-3">
+              {livePositions.map(pos => {
+                const upnlColor = pos.upnl >= 0 ? 'text-green-400' : 'text-red-400'
+                const pct = pos.upnl_pct ?? 0
+                const margin   = pos.margin   ?? 10
+                const notional = pos.notional ?? margin * (pos.leverage ?? 10)
+                const lev      = pos.leverage ?? 10
+                return (
+                  <div key={pos.symbol} className="rounded-xl border border-slate-700 bg-slate-800/60 p-3 space-y-2">
+                    {/* Başlık satırı */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-white text-sm">{pos.symbol}</span>
+                        {pos.open_ts && (
+                          <span className="text-xs text-slate-500 tabular-nums">
+                            {new Date(pos.open_ts).toLocaleTimeString('tr-TR')}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${pos.side === 'LONG' ? 'bg-green-900/60 text-green-300' : 'bg-red-900/60 text-red-300'}`}>
+                          {pos.side}
+                        </span>
+                        <button
+                          onClick={() =>
+                            fetch(`${API_BASE}/positions/${encodeURIComponent(pos.symbol)}/close`, { method: 'POST' })
+                          }
+                          className="px-2 py-0.5 rounded text-xs font-medium bg-slate-700 hover:bg-red-800/70 text-slate-300 hover:text-red-200 transition"
+                        >
+                          Kapat
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Fiyat bilgisi */}
+                    <div className="grid grid-cols-2 gap-x-4 text-xs text-slate-400">
+                      <span>Giriş: <span className="text-white tabular-nums">{pos.entry.toFixed(2)}</span></span>
+                      <span>Şu an: <span className="text-yellow-300 tabular-nums font-semibold">{pos.current_price.toFixed(2)}</span></span>
+                      <span>TP: <span className="text-green-400 tabular-nums">{pos.tp.toFixed(2)}</span></span>
+                      <span>SL: <span className="text-red-400 tabular-nums">{pos.sl.toFixed(2)}</span></span>
+                    </div>
+
+                    {/* PnL */}
+                    <div className="flex items-baseline justify-between">
+                      <span className={`text-base font-bold tabular-nums ${upnlColor}`}>
+                        {pos.upnl >= 0 ? '+' : ''}{pos.upnl.toFixed(3)} USDT
+                      </span>
+                      <span className={`text-sm font-semibold tabular-nums ${upnlColor}`}>
+                        {pct >= 0 ? '+' : ''}{pct.toFixed(2)}%
+                      </span>
+                    </div>
+
+                    {/* Marjin × Kaldıraç */}
+                    <div className="flex items-center gap-1.5 text-xs pt-1 border-t border-slate-700/60">
+                      <span className="text-slate-400 tabular-nums font-mono">{margin.toFixed(2)} USDT</span>
+                      <span className="text-slate-600">×</span>
+                      <span className="text-indigo-400 font-semibold">{lev}x</span>
+                      <span className="text-slate-600">=</span>
+                      <span className="text-slate-200 tabular-nums font-semibold">{notional.toFixed(2)} USDT</span>
+                      {pos.proba !== undefined && (
+                        <span className="ml-auto text-slate-500">
+                          Sinyal: <span className="text-slate-300">{(pos.proba * 100).toFixed(1)}%</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* İşlem Geçmişi */}
         <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">
           <div className="text-sm font-medium text-white mb-4 border-b border-slate-800 pb-2">İşlem Geçmişi</div>
           <TradeHistory />

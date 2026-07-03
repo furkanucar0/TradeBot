@@ -44,6 +44,27 @@ export default function ModelMetrics({ summary, equityUrl }: Props) {
         <Stat label="Kaldıraç" value={`${summary.leverage}x`} />
       </div>
 
+      {(summary.daily_avg_pct !== undefined) && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat
+            label={`Günlük Ort. (${summary.test_days ?? 0} gün)`}
+            value={`${(summary.daily_avg_pct ?? 0) >= 0 ? '+' : ''}${(summary.daily_avg_pct ?? 0).toFixed(2)}%`}
+            color={(summary.daily_avg_pct ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}
+          />
+          <Stat
+            label="En İyi Gün"
+            value={`+${(summary.daily_best_pct ?? 0).toFixed(2)}%`}
+            color="text-green-400"
+          />
+          <Stat
+            label="En Kötü Gün"
+            value={`${(summary.daily_worst_pct ?? 0).toFixed(2)}%`}
+            color={(summary.daily_worst_pct ?? 0) < 0 ? 'text-red-400' : 'text-slate-200'}
+          />
+          <Stat label="Günlük Std" value={`±${(summary.daily_std_pct ?? 0).toFixed(2)}%`} />
+        </div>
+      )}
+
       {(summary.precision !== undefined) && (
         <div className="grid grid-cols-3 gap-3">
           <Stat label="Precision" value={(summary.precision ?? 0).toFixed(4)} />

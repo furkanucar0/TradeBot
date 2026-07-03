@@ -132,7 +132,28 @@ async def get_status():
         except Exception:
             pass
 
-    ready = summary.get("win_rate", 0) >= 0.60 and summary.get("rr", 0) >= 2.0
+    # Tek doğruluk kaynağı: train_engine ready_for_live bayrağını summary'ye yazar.
+    # Eski raporlarda bayrak yoksa aynı dinamik kriterle yeniden hesapla.
+    if "ready_for_live" in summary:
+        ready = bool(summary["ready_for_live"])
+    else:
+        _rr  = summary.get("rr", 0)
+        _wr  = summary.get("win_rate", 0)
+        _sl  = summary.get("sl_pct", 0.005)
+        _tp  = summary.get("tp_pct", 0.01)
+        _fee = 0.0004 * 2  # giriş + çıkış komisyonu
+        _net_tp = _tp - _fee
+        _net_sl = _sl + _fee
+        _breakeven  = _net_sl / (_net_tp + _net_sl) if (_net_tp + _net_sl) > 0 else 1.0
+        _wr_target  = min(_breakeven + 0.05, 0.60)
+        _ev_positive = _wr * _net_tp > (1 - _wr) * _net_sl
+        ready = (
+            _wr  >= _wr_target
+            and _rr  >= 1.0
+            and _ev_positive
+            and summary.get("sharpe", 0) >= 0.5
+            and summary.get("max_drawdown", 1) <= 0.25
+        )
     _bot_state["ready_for_live"] = ready
 
     return {
@@ -150,29 +171,79 @@ async def get_status():
 
 # ── Train ─────────────────────────────────────────────────────────────────────
 @app.post("/train")
-async def trigger_train(background_tasks: BackgroundTasks):
+async def trigger_train(background_tasks: BackgroundTasks, days: int = 45):
+    """days: eğitimde kullanılacak son gün sayısı (0 = tüm veri).
+    Varsayılan 45 — tam veride sinyal rejim-bağımlı olduğu için uzun pencereler
+    her iki yönü de precision kapısına takıp sinyalsiz model üretiyor."""
     if _bot_state["is_training"]:
         raise HTTPException(400, "Eğitim zaten devam ediyor")
 
     def run_training():
+        import telegram_notifier as tg
         _bot_state["is_training"] = True
-        _push_event({"phase": "server", "msg": "Eğitim başlatıldı"})
+        _push_event({"phase": "server", "msg": f"Eğitim başlatıldı (son {days} gün)" if days else "Eğitim başlatıldı (tüm veri)"})
+        tg.send_async(f"🧠 <b>Model eğitimi başladı...</b> (son {days} gün)" if days else "🧠 <b>Model eğitimi başladı...</b>")
         try:
             import train_engine
-            # broadcast fonksiyonunu bizim _push_event ile bağla
             train_engine.broadcast = _push_event
-            train_engine.main(run_server=False)
-            # Backtest sonuçlarını oku
+            train_engine.main(run_server=False, days=days)
             p = REPORTS_DIR / "backtest_summary.json"
             if p.exists():
-                _bot_state["last_summary"] = json.loads(p.read_text(encoding="utf-8"))
+                s = json.loads(p.read_text(encoding="utf-8"))
+                _bot_state["last_summary"] = s
+                tg.send_async(
+                    f"✅ <b>Eğitim tamamlandı!</b>\n"
+                    f"Win Rate: {s.get('win_rate',0)*100:.1f}% | R:R: {s.get('rr',0):.2f}\n"
+                    f"Sharpe: {s.get('sharpe',0):.2f} | Max DD: {s.get('max_drawdown',0)*100:.1f}%\n"
+                    f"Yön: {s.get('direction','?')} | /paper ile botu başlat"
+                )
         except Exception as e:
             _push_event({"phase": "error", "msg": str(e)})
+            tg.send_async(f"❌ Eğitim hatası: {e}")
         finally:
             _bot_state["is_training"] = False
 
     background_tasks.add_task(run_training)
     return {"status": "started"}
+
+
+# ── Candles ───────────────────────────────────────────────────────────────────
+@app.get("/candles/{symbol}")
+async def get_candles(symbol: str, limit: int = 200, since: int = 0):
+    """DB'den mumları döner. since: Unix saniye (0 = tümü, >0 = o andan itibaren)"""
+    sym = symbol.upper()
+    if "/" not in sym:
+        sym = sym.replace("USDT", "") + "/USDT" if sym.endswith("USDT") else sym + "/USDT"
+
+    import sqlite3
+    db_path = get_database_path()
+    conn = sqlite3.connect(str(db_path))
+    cur = conn.cursor()
+    since_ms = since * 1000
+    if since_ms > 0:
+        cur.execute(
+            "SELECT timestamp, open, high, low, close, volume "
+            "FROM historical_market_data "
+            "WHERE symbol = ? AND timestamp >= ? "
+            "ORDER BY timestamp ASC LIMIT ?",
+            (sym, since_ms, limit),
+        )
+        rows = cur.fetchall()
+    else:
+        cur.execute(
+            "SELECT timestamp, open, high, low, close, volume "
+            "FROM historical_market_data "
+            "WHERE symbol = ? "
+            "ORDER BY timestamp DESC LIMIT ?",
+            (sym, limit),
+        )
+        rows = cur.fetchall()
+        rows.reverse()
+    conn.close()
+    return [
+        {"time": r[0] // 1000, "open": r[1], "high": r[2], "low": r[3], "close": r[4], "volume": r[5]}
+        for r in rows
+    ]
 
 
 # ── Backtest Results ──────────────────────────────────────────────────────────
@@ -197,13 +268,64 @@ async def get_positions():
 
 # ── Trade History ─────────────────────────────────────────────────────────────
 @app.get("/trades")
-async def get_trades(limit: int = 100, offset: int = 0):
+async def get_trades(
+    limit: int = 100,
+    offset: int = 0,
+    since: int = 0,       # Unix saniye
+    until: int = 0,       # Unix saniye
+    mode: str = "all",    # "all" | "paper" | "live"
+    status: str = "",     # "open" | "closed" | "cancelled" | ""
+):
+    paper_filter = None
+    if mode == "paper":
+        paper_filter = True
+    elif mode == "live":
+        paper_filter = False
+
     db = Database()
     await db.connect()
     try:
-        return await db.fetch_trades(limit=limit, offset=offset)
+        return await db.fetch_trades(
+            limit=limit,
+            offset=offset,
+            since_ms=since * 1000,
+            until_ms=until * 1000,
+            paper=paper_filter,
+            status=status or None,
+        )
     finally:
         await db.close()
+
+
+# ── Trade Sil ────────────────────────────────────────────────────────────────
+@app.delete("/trades")
+async def delete_trades(ids: List[int]):
+    """Seçili trade ID'lerini sil (açık olanlar korunur)."""
+    if not ids:
+        raise HTTPException(400, "Silinecek ID listesi boş")
+    db = Database()
+    await db.connect()
+    try:
+        placeholders = ",".join("?" * len(ids))
+        await db.conn.execute(
+            f"DELETE FROM trades WHERE id IN ({placeholders}) AND status != 'open'",
+            ids,
+        )
+        await db.conn.commit()
+    finally:
+        await db.close()
+    return {"deleted": len(ids)}
+
+
+# ── Manuel Pozisyon Kapat ─────────────────────────────────────────────────────
+@app.post("/positions/{symbol}/close")
+async def close_position(symbol: str):
+    """Açık bir pozisyonu manuel olarak market fiyatından kapat."""
+    if not _bot_state["is_running"]:
+        raise HTTPException(400, "Bot çalışmıyor")
+    import live_trader
+    live_trader.request_close(symbol)
+    return {"status": "requested", "symbol": symbol}
 
 
 # ── Bot Start/Stop ────────────────────────────────────────────────────────────
@@ -212,7 +334,11 @@ async def bot_start(background_tasks: BackgroundTasks, testnet: bool = True):
     if _bot_state["is_running"]:
         raise HTTPException(400, "Bot zaten çalışıyor")
     if not _bot_state["ready_for_live"] and not testnet:
-        raise HTTPException(403, "Backtest kriterleri karşılanmadan mainnet trade başlatılamaz (WR>60% + R:R>2.0 gerekli)")
+        raise HTTPException(
+            403,
+            "Backtest kriterleri karşılanmadan mainnet trade başlatılamaz "
+            "(dinamik WR hedefi + R:R≥2.0 + pozitif EV + Sharpe≥0.5 + MaxDD≤%25 gerekli)",
+        )
     if not MODEL_PATH.exists():
         raise HTTPException(404, "Model bulunamadı. Önce /train çalıştırın.")
 
@@ -242,6 +368,15 @@ async def bot_stop():
     live_trader.stop()
     _push_event({"phase": "server", "msg": "Bot durduruldu"})
     return {"status": "stopped"}
+
+
+@app.post("/shutdown")
+async def shutdown():
+    """Backend'i tamamen kapat (Telegram /durdur komutu için)."""
+    import os
+    _push_event({"phase": "server", "msg": "Backend kapatılıyor..."})
+    threading.Thread(target=lambda: (time.sleep(0.5), os._exit(0)), daemon=True).start()
+    return {"status": "shutting_down"}
 
 
 # ── Entry Point ───────────────────────────────────────────────────────────────

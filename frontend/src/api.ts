@@ -49,6 +49,11 @@ export interface BacktestSummary {
   precision?: number
   f1?: number
   accuracy?: number
+  daily_avg_pct?: number
+  daily_worst_pct?: number
+  daily_best_pct?: number
+  daily_std_pct?: number
+  test_days?: number
 }
 
 export const fetchStatus = () => api.get<BotStatus>('/status').then(r => r.data)

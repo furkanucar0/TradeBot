@@ -19,8 +19,9 @@ import pandas as pd
 from database import Database
 
 ZIP_FOLDER = Path(__file__).resolve().parent / "zips"
+# Hem aylık (BTCUSDT-5m-2024-01.zip) hem günlük (BTCUSDT-1m-2026-05-01.zip) formatı
 FILENAME_RE = re.compile(
-    r"(?P<symbol>[A-Z0-9]+)-(?P<tf>\w+)-(?P<year>\d{4})-(?P<month>\d{2})\.zip$",
+    r"(?P<symbol>[A-Z0-9]+)-(?P<tf>[^-]+)-(?P<year>\d{4})-(?P<month>\d{2})(?:-(?P<day>\d{2}))?\.zip$",
     re.IGNORECASE,
 )
 
@@ -40,10 +41,12 @@ def parse_zip_meta(path: Path) -> Optional[Dict[str, str]]:
     m = FILENAME_RE.search(path.name)
     if not m:
         return None
+    day = m.group("day")
+    period = f"{m.group('year')}-{m.group('month')}-{day}" if day else f"{m.group('year')}-{m.group('month')}"
     return {
         "symbol": normalize_symbol(m.group("symbol")),
         "tf": m.group("tf"),
-        "period": f"{m.group('year')}-{m.group('month')}",
+        "period": period,
     }
 
 
@@ -58,20 +61,31 @@ def extract_csv(zip_bytes: bytes) -> Optional[BytesIO]:
 
 def read_ohlcv(buf: BytesIO) -> pd.DataFrame:
     buf.seek(0)
+    # Binance günlük zip'lerde başlık satırı var, aylıklarda yok; otomatik tespit et
+    peek = buf.read(64).decode("utf-8", errors="ignore")
+    buf.seek(0)
+    has_header = not peek.lstrip().startswith(("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"))
+
+    col_names = [
+        "timestamp", "open", "high", "low", "close", "volume",
+        "close_time", "quote_volume", "trades",
+        "taker_buy_base", "taker_buy_quote", "ignore",
+    ]
     df = pd.read_csv(
         buf,
-        header=None,
-        names=[
-            "timestamp", "open", "high", "low", "close", "volume",
-            "close_time", "quote_volume", "trades",
-            "taker_buy_base", "taker_buy_quote", "ignore",
-        ],
+        header=0 if has_header else None,
+        names=None if has_header else col_names,
     )
+    # Başlık varsa Binance sütun isimlerini normalleştir
+    if has_header:
+        df.columns = col_names[:len(df.columns)]
+
     df = df[["timestamp", "open", "high", "low", "close", "volume"]].dropna()
-    df["timestamp"] = df["timestamp"].astype("int64")
+    df["timestamp"] = pd.to_numeric(df["timestamp"], errors="coerce").astype("int64")
+    df = df.dropna(subset=["timestamp"])
     for col in ["open", "high", "low", "close", "volume"]:
-        df[col] = df[col].astype("float64")
-    return df
+        df[col] = pd.to_numeric(df[col], errors="coerce").astype("float64")
+    return df.dropna()
 
 
 async def load_zip(db: Database, path: Path) -> None:

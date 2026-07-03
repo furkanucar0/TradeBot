@@ -1,52 +1,101 @@
 """
 Binance USDT-M Futures Live Trader
-Testnet: BINANCE_TESTNET=true (varsayılan)
-Mainnet: BINANCE_TESTNET=false (backtest kriterleri karşılanmalı)
+Paper mode (testnet=True): Gerçek Binance verisi, emir yok, demo kasa takibi
+Live mode (testnet=False): Gerçek emir (backtest kriterleri zorunlu)
 """
 import asyncio
+import concurrent.futures
+import json
 import os
 import time
+from collections import deque
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional
 
 import ccxt
 import joblib
 import numpy as np
 import pandas as pd
-
-try:
-    from ta.momentum import RSIIndicator
-    from ta.trend import MACD
-    from ta.volatility import BollingerBands, AverageTrueRange
-except Exception:
-    RSIIndicator = MACD = BollingerBands = AverageTrueRange = None
+import requests as _req
 
 from database import Database
+from features import FEATURE_COLS, latest_features
+import telegram_notifier as tg
 
 MODEL_PATH = Path(__file__).resolve().parent / "model.bin"
 
 SYMBOLS = ["BTC/USDT", "ETH/USDT"]
-TIMEFRAME = "5m"
-LEVERAGE = 5
-POSITION_USDT = 50.0      # teminat başına
+TIMEFRAME = "1m"
+# Kararlılık paketi (2026-07-03): hedef günlük %1-2 istikrarlı getiri, düşük varyans
+LEVERAGE = 5               # 10x → 5x: gap/likidasyon riski yarıya
+RISK_PER_TRADE = 0.005     # SL vurursa kasanın maks %0.5'i gider — backtest ile AYNI
 MAX_POSITIONS = 2
 FEE_RATE = 0.0004
-LOOP_INTERVAL = 30        # saniye
-
-FEATURE_COLS = [
-    "rsi_14", "macd", "macd_signal", "macd_hist",
-    "bb_position", "bb_width",
-    "atr_14", "volume_ratio",
-    "ret_1", "ret_5", "ret_15",
-]
+SLIPPAGE_RATE = 0.0002     # backtest ile aynı market-order slippage varsayımı
+LOOP_INTERVAL = 30         # saniye (canlı veri çekme aralığı)
+DEMO_START_BALANCE = 100.0 # demo kasa başlangıç bakiyesi
+CANDLE_BUFFER_SIZE = 3000  # 1m mum buffer'ı (50 saat) — 1h MTF için yeterli warmup
+RETRAIN_DAYS = 45          # otomatik yeniden eğitim penceresi (tam veri rejim-bağımlı)
+SIGNAL_MARGIN = 0.07       # sinyal seçiciliği: proba eşiği bu kadar da aşmalı.
+                           # Kalibrasyon kanıtı (2026-07-03, val): SHORT proba>=0.55
+                           # dilimi WR %63.7, 0.45-0.50 dilimi %30 (başabaş %40).
+                           # 0.48 eşik + 0.07 = ~0.55 efektif taban → kârlı bölge.
+TREND_VETO_MARGIN = 0.15   # 1h trend aleyhteyken sinyal ancak eşiği bu kadar aşarsa geçer
 
 _stop_flag = False
+_model_updating = False        # retrain sırasında yeni pozisyon açmayı engeller
+_manual_close_requests: set   = set()   # manuel kapatılacak semboller
 broadcast: Callable[[Dict[str, Any]], None] = lambda ev: None
+
+# Günlük frenler (yüzde bazlı, gün başı bakiyeye göre; her UTC gününde sıfırlanır)
+DAILY_LOSS_LIMIT_PCT  = -0.015   # gün içi -%1.5 → o gün yeni işlem yok (kayıp freni)
+DAILY_PROFIT_LOCK_PCT =  0.02    # gün içi +%2  → o gün yeni işlem yok (kâr kilidi)
+
+
+def request_close(symbol: str) -> None:
+    """Frontend'den gelen manuel kapatma isteği."""
+    _manual_close_requests.add(symbol)
 
 
 def stop() -> None:
     global _stop_flag
     _stop_flag = True
+
+
+_fng_cache: Dict[str, Any] = {"value": 50, "ts": 0.0}   # Fear & Greed cache (1 saat)
+
+
+def _fetch_order_book_imbalance(symbol: str) -> float:
+    """Bid/Ask imbalance: +1 = tamamen bids, -1 = tamamen asks."""
+    try:
+        raw = symbol.replace("/", "")
+        resp = _req.get(
+            "https://fapi.binance.com/fapi/v1/depth",
+            params={"symbol": raw, "limit": 20},
+            timeout=3,
+        )
+        data = resp.json()
+        bid_vol = sum(float(b[1]) for b in data.get("bids", []))
+        ask_vol = sum(float(a[1]) for a in data.get("asks", []))
+        total   = bid_vol + ask_vol
+        return (bid_vol - ask_vol) / total if total > 0 else 0.0
+    except Exception:
+        return 0.0
+
+
+def _fetch_fear_greed() -> int:
+    """Alternative.me Fear & Greed Index, 1 saatte bir güncellenir (0=korku, 100=açgözlülük)."""
+    now = time.time()
+    if now - _fng_cache["ts"] < 3600:
+        return int(_fng_cache["value"])
+    try:
+        resp = _req.get("https://api.alternative.me/fng/?limit=1", timeout=5)
+        val = int(resp.json()["data"][0]["value"])
+        _fng_cache["value"] = val
+        _fng_cache["ts"]    = now
+        return val
+    except Exception:
+        return 50
 
 
 def _load_model() -> Dict[str, Any]:
@@ -55,9 +104,9 @@ def _load_model() -> Dict[str, Any]:
     return joblib.load(str(MODEL_PATH))
 
 
-def _build_exchange(testnet: bool) -> ccxt.Exchange:
+def _build_exchange() -> ccxt.Exchange:
     api_key = os.getenv("BINANCE_API_KEY", "")
-    secret = os.getenv("BINANCE_API_SECRET", "")
+    secret  = os.getenv("BINANCE_API_SECRET", "")
 
     exchange = ccxt.binanceusdm({
         "apiKey": api_key,
@@ -66,73 +115,138 @@ def _build_exchange(testnet: bool) -> ccxt.Exchange:
         "options": {"defaultType": "future"},
     })
 
-    if testnet:
-        exchange.set_sandbox_mode(True)
-        broadcast({"phase": "server", "msg": "TESTNET modu aktif"})
-    else:
-        broadcast({"phase": "server", "msg": "⚠️  MAINNET modu aktif — gerçek para kullanılıyor"})
+    # Yerel saat ile Binance sunucu saati arasındaki farkı düzelt
+    try:
+        server_ms = _req.get("https://fapi.binance.com/fapi/v1/time", timeout=5).json()["serverTime"]
+        diff = int(time.time() * 1000) - server_ms
+        exchange.options["timeDifference"] = diff
+    except Exception:
+        pass
 
     return exchange
 
 
 def _fetch_ohlcv(exchange: ccxt.Exchange, symbol: str, limit: int = 100) -> pd.DataFrame:
-    raw = exchange.fetch_ohlcv(symbol, timeframe=TIMEFRAME, limit=limit)
-    df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
+    # Public REST — ccxt'in exchangeInfo yükleme hatasını atlatır, auth gerekmez.
+    # Binance tek istekte en fazla 1500 mum verir; limit > 1500 için geriye doğru sayfalar.
+    raw_sym = symbol.replace("/", "")  # BTC/USDT → BTCUSDT
+    all_rows: List[list] = []
+    end_time: Optional[int] = None
+    remaining = limit
+    while remaining > 0:
+        batch = min(remaining, 1500)
+        params: Dict[str, Any] = {"symbol": raw_sym, "interval": TIMEFRAME, "limit": batch}
+        if end_time is not None:
+            params["endTime"] = end_time
+        resp = _req.get("https://fapi.binance.com/fapi/v1/klines", params=params, timeout=10)
+        resp.raise_for_status()
+        rows = resp.json()
+        if not rows:
+            break
+        all_rows = rows + all_rows
+        end_time = int(rows[0][0]) - 1   # bir önceki sayfanın bitişi
+        remaining -= len(rows)
+        if len(rows) < batch:
+            break
+    df = pd.DataFrame(all_rows, columns=[
+        "timestamp", "open", "high", "low", "close", "volume",
+        "close_time", "qav", "num_trades", "taker_base", "taker_quote", "ignore",
+    ])
     for col in ["open", "high", "low", "close", "volume"]:
         df[col] = df[col].astype(float)
-    return df
+    df["timestamp"] = df["timestamp"].astype(int)
+    return df[["timestamp", "open", "high", "low", "close", "volume"]]
 
 
-def _compute_features(df: pd.DataFrame) -> Optional[Dict[str, float]]:
-    if len(df) < 30 or RSIIndicator is None:
+def _fetch_recent_klines(symbol: str, limit: int = 3) -> list:
+    """Son N 1m mumu ham liste olarak döner (REST fiyat fallback'i için)."""
+    raw_sym = symbol.replace("/", "")
+    resp = _req.get(
+        "https://fapi.binance.com/fapi/v1/klines",
+        params={"symbol": raw_sym, "interval": TIMEFRAME, "limit": limit},
+        timeout=8,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _fetch_ohlcv_1d(symbol: str, limit: int = 60) -> pd.DataFrame:
+    """Başlangıçta 1d OHLCV çek — _d1_buffer için, sadece bir kez kullanılır."""
+    raw_sym = symbol.replace("/", "")
+    resp = _req.get(
+        "https://fapi.binance.com/fapi/v1/klines",
+        params={"symbol": raw_sym, "interval": "1d", "limit": limit},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    rows = resp.json()
+    df = pd.DataFrame(rows, columns=[
+        "timestamp", "open", "high", "low", "close", "volume",
+        "close_time", "qav", "num_trades", "taker_base", "taker_quote", "ignore",
+    ])
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = df[col].astype(float)
+    df["timestamp"] = df["timestamp"].astype(int)
+    return df[["timestamp", "open", "high", "low", "close", "volume"]]
+
+
+def _compute_features(df: pd.DataFrame, d1_df: Optional[pd.DataFrame] = None) -> Optional[Dict[str, float]]:
+    """
+    Eğitimle BİREBİR AYNI özellik hesaplaması — features.latest_features kullanır.
+    Eksik/NaN özellik varsa None döner (varsayılan değerlerle sinyal ÜRETMEZ;
+    eski davranış nötr varsayılanlarla trade açabiliyordu).
+    """
+    try:
+        return latest_features(df, d1_df)
+    except Exception as e:
+        broadcast({"phase": "error", "msg": f"Özellik hesaplama hatası: {e}"})
         return None
-    close = df["close"]
-
-    rsi = RSIIndicator(close=close, window=14).rsi()
-    macd_obj = MACD(close=close)
-    macd_line = macd_obj.macd()
-    macd_sig = macd_obj.macd_signal()
-    macd_hist = macd_obj.macd_diff()
-
-    bb = BollingerBands(close=close, window=20, window_dev=2)
-    bb_h = bb.bollinger_hband()
-    bb_l = bb.bollinger_lband()
-    bb_m = bb.bollinger_mavg()
-    bb_w = (bb_h - bb_l) / bb_m.replace(0, np.nan)
-    bb_pos = (close - bb_l) / (bb_h - bb_l).replace(0, np.nan)
-
-    atr = AverageTrueRange(high=df["high"], low=df["low"], close=close, window=14).average_true_range()
-    vol_ratio = df["volume"] / df["volume"].rolling(20).mean().replace(0, np.nan)
-
-    ret1 = close.pct_change(1)
-    ret5 = close.pct_change(5)
-    ret15 = close.pct_change(15)
-
-    row = {
-        "rsi_14": rsi.iloc[-1],
-        "macd": macd_line.iloc[-1],
-        "macd_signal": macd_sig.iloc[-1],
-        "macd_hist": macd_hist.iloc[-1],
-        "bb_position": bb_pos.iloc[-1],
-        "bb_width": bb_w.iloc[-1],
-        "atr_14": atr.iloc[-1],
-        "volume_ratio": vol_ratio.iloc[-1],
-        "ret_1": ret1.iloc[-1],
-        "ret_5": ret5.iloc[-1],
-        "ret_15": ret15.iloc[-1],
-    }
-    if any(v is None or (isinstance(v, float) and np.isnan(v)) for v in row.values()):
-        return None
-    return row
 
 
-def _predict(model_payload: Dict, features: Dict[str, float]) -> tuple[int, float]:
-    model = model_payload["model"]
-    cols = model_payload.get("feature_cols", FEATURE_COLS)
-    X = np.array([[features.get(c, 0.0) for c in cols]], dtype=np.float32)
-    pred = int(model.predict(X)[0])
-    proba = float(model.predict_proba(X)[0][1])
+def _predict(model_payload: Dict, features: Dict[str, float]) -> tuple:
+    """Geriye dönük uyumluluk — tek yönlü eski modeller için."""
+    model     = model_payload["model"]
+    cols      = model_payload.get("feature_cols", FEATURE_COLS)
+    threshold = float(model_payload.get("threshold", 0.5))
+    X         = pd.DataFrame([[features.get(c, 0.0) for c in cols]], columns=cols)
+    proba     = float(model.predict_proba(X)[0][1])
+    pred      = 1 if proba >= threshold else 0
     return pred, proba
+
+
+def _predict_bidir(model_payload: Dict, features: Dict[str, float],
+                   thr_adj: float = 0.0) -> tuple:
+    """
+    Çift yönlü tahmin: (pred_long, proba_long, pred_short, proba_short)
+    thr_adj: F&G gibi filtrelerden gelen eşik artışı
+    """
+    cols = model_payload.get("feature_cols", FEATURE_COLS)
+    X    = pd.DataFrame([[features.get(c, 0.0) for c in cols]], columns=cols)
+
+    # Yeni çift yönlü model
+    m_long  = model_payload.get("model_long")
+    m_short = model_payload.get("model_short")
+    thr_l   = float(model_payload.get("threshold_long",  0.5)) + thr_adj
+    thr_s   = float(model_payload.get("threshold_short", 0.5)) + thr_adj
+
+    if m_long and m_short:
+        p_long  = float(m_long.predict_proba(X)[0][1])
+        p_short = float(m_short.predict_proba(X)[0][1])
+        return (1 if p_long  >= thr_l else 0), p_long, \
+               (1 if p_short >= thr_s else 0), p_short
+
+    # Eski tek yönlü model — geriye dönük uyumluluk
+    m_old   = model_payload.get("model")
+    old_dir = model_payload.get("direction", "LONG")
+    thr_old = float(model_payload.get("threshold", 0.5)) + thr_adj
+    if m_old:
+        p = float(m_old.predict_proba(X)[0][1])
+        pred = 1 if p >= thr_old else 0
+        if old_dir == "LONG":
+            return pred, p, 0, 0.0
+        else:
+            return 0, 0.0, pred, p
+    return 0, 0.0, 0, 0.0
 
 
 def _set_leverage(exchange: ccxt.Exchange, symbol: str) -> None:
@@ -142,44 +256,116 @@ def _set_leverage(exchange: ccxt.Exchange, symbol: str) -> None:
         broadcast({"phase": "server", "msg": f"Kaldıraç ayarlanamadı ({symbol}): {e}"})
 
 
-def _open_position(exchange: ccxt.Exchange, symbol: str, entry_price: float, sl_pct: float, tp_pct: float) -> Optional[str]:
+def _open_live_position(exchange: ccxt.Exchange, symbol: str, side: str,
+                        entry_price: float, sl_pct: float, tp_pct: float,
+                        notional: float) -> Optional[str]:
     try:
-        notional = POSITION_USDT * LEVERAGE
-        qty = round(notional / entry_price, 4)
+        qty = notional / entry_price
+        try:
+            qty = float(exchange.amount_to_precision(symbol, qty))
+        except Exception:
+            qty = round(qty, 3)   # markets yüklenemezse BTC/ETH step'ine uygun fallback
+        order_side = "buy" if side == "LONG" else "sell"
 
-        order = exchange.create_order(symbol, "market", "buy", qty)
+        order = exchange.create_order(symbol, "market", order_side, qty)
         order_id = order.get("id", "")
 
-        sl_price = round(entry_price * (1 - sl_pct), 4)
-        tp_price = round(entry_price * (1 + tp_pct), 4)
+        if side == "LONG":
+            sl_price = round(entry_price * (1 - sl_pct), 4)
+            tp_price = round(entry_price * (1 + tp_pct), 4)
+            close_side = "sell"
+        else:
+            sl_price = round(entry_price * (1 + sl_pct), 4)
+            tp_price = round(entry_price * (1 - tp_pct), 4)
+            close_side = "buy"
 
-        exchange.create_order(symbol, "stop_market", "sell", qty, params={"stopPrice": sl_price, "reduceOnly": True})
-        exchange.create_order(symbol, "take_profit_market", "sell", qty, params={"stopPrice": tp_price, "reduceOnly": True})
+        exchange.create_order(symbol, "stop_market", close_side, qty,
+                              params={"stopPrice": sl_price, "reduceOnly": True})
+        exchange.create_order(symbol, "take_profit_market", close_side, qty,
+                              params={"stopPrice": tp_price, "reduceOnly": True})
 
-        broadcast({
-            "phase": "trade_open",
-            "symbol": symbol,
-            "entry": entry_price,
-            "sl": sl_price,
-            "tp": tp_price,
-            "qty": qty,
-            "leverage": LEVERAGE,
-        })
+        broadcast({"phase": "trade_open", "symbol": symbol, "side": side,
+                   "entry": entry_price, "sl": sl_price, "tp": tp_price,
+                   "qty": qty, "leverage": LEVERAGE})
         return order_id
     except Exception as e:
-        broadcast({"phase": "error", "msg": f"Pozisyon açılamadı ({symbol}): {e}"})
+        err_msg = f"Pozisyon açılamadı ({symbol}): {e}"
+        broadcast({"phase": "error", "msg": err_msg})
+        tg.send_async(f"❌ <b>Emir Hatası | {symbol}</b>\n{err_msg}")
         return None
 
 
-def _sync_positions(exchange: ccxt.Exchange, db: Database) -> List[str]:
-    """Exchange'deki açık pozisyon sembollerini döner."""
-    try:
-        positions = exchange.fetch_positions(SYMBOLS)
-        open_syms = [p["symbol"] for p in positions if abs(float(p.get("contracts", 0) or 0)) > 0]
-        return open_syms
-    except Exception as e:
-        broadcast({"phase": "error", "msg": f"Pozisyon sorgulanamadı: {e}"})
-        return []
+# Sembol başına h1_atr_ratio geçmişi — volatilite cezası göreli artışa bakar.
+# NOT: h1_atr_ratio doğal olarak ~7-17 bandındadır (1h ATR >> 1m ATR); mutlak
+# değere ceza kesmek eşiği kalıcı olarak tavana yapıştırıp TÜM sinyalleri
+# öldürüyordu. Bu yüzden kendi yakın geçmişinin medyanına oranlanır.
+_atr_ratio_hist: Dict[str, Deque[float]] = {}
+
+
+def _calc_dynamic_threshold(base_adj: float, features: Dict[str, float], sym: str = "") -> float:
+    """F&G baz ayarı üzerine volatilite + trend hizalama düzeltmesi ekler."""
+    # Volatilite cezası: 1h ATR oranı KENDİ son 24 saat medyanının üzerindeyse
+    vol_ratio = features.get("h1_atr_ratio", 1.0)
+    hist = _atr_ratio_hist.setdefault(sym, deque(maxlen=2880))  # ~24 saat (30 sn döngü)
+    hist.append(vol_ratio)
+    baseline = sorted(hist)[len(hist) // 2]   # medyan
+    rel = vol_ratio / baseline if baseline > 0 else 1.0
+    vol_penalty = max(0.0, (rel - 1.0) * 0.12)   # medyanın %10 üstü → +0.012 eşik
+
+    # Trend hizalama bonusu: 3/3 hizalı → eşiği biraz düşür
+    tf_score  = features.get("tf_alignment", 1.5)
+    tf_bonus  = (tf_score - 1.5) * (-0.025)             # 3/3 → -0.038; 0/3 → +0.038
+
+    # ADX trend gücü bonusu
+    adx       = features.get("h1_adx", 25.0)
+    adx_bonus = -0.03 if adx > 30 else (0.03 if adx < 18 else 0.0)
+
+    adj = base_adj + vol_penalty + tf_bonus + adx_bonus
+    return float(np.clip(adj, -0.05, 0.25))
+
+
+def _calc_position_margin(
+    balance: float,
+    peak_balance: float,
+    demo_trades: List[Dict],
+    sl_pct: float,
+    tp_pct: float,
+) -> tuple:
+    """
+    Birleşik pozisyon boyutlandırma — backtest ile AYNI hedef:
+    SL vurursa kasanın en fazla RISK_PER_TRADE'i (%0.5) gider.
+    Drawdown ve Kelly katmanları riski sadece AŞAĞI çeker, asla yukarı değil.
+    Döndürür: (margin_usdt, effective_leverage)
+    """
+    # Katman 1: Drawdown Scale — DD %10'a gelince pozisyon %70 küçülür
+    dd       = (peak_balance - balance) / peak_balance if peak_balance > 0 else 0.0
+    dd_scale = max(0.30, 1.0 - dd * 7.0)
+
+    # Katman 2: Quarter-Kelly (son 20 işlem performansı)
+    recent = demo_trades[-20:]
+    if len(recent) >= 10:
+        wins    = sum(1 for t in recent if t["result"] == "TP")
+        wr      = wins / len(recent)
+        rr      = (tp_pct / sl_pct) if sl_pct > 0 else 1.0
+        kelly   = max(0.0, (wr * rr - (1 - wr)) / rr)
+        k_scale = max(0.30, min(1.0, kelly * 3.0))   # quarter-Kelly, 0.30–1.0
+    else:
+        k_scale = 0.50   # yeterli veri yokken muhafazakâr (efektif risk %0.25)
+
+    # Drawdown'a göre kaldıraç kademesi (taban 5x)
+    if dd < 0.05:
+        eff_leverage = 5
+    elif dd < 0.08:
+        eff_leverage = 4
+    else:
+        eff_leverage = 3
+
+    # Hedef risk: notional × sl_pct = balance × risk_pct olacak şekilde marjin
+    risk_pct = RISK_PER_TRADE * dd_scale * k_scale        # maks %0.5
+    margin   = (balance * risk_pct) / sl_pct / eff_leverage if sl_pct > 0 else balance * 0.05
+    margin   = max(5.0, min(balance * 0.25, margin))      # min $5, marjin ≤ kasa %25
+
+    return margin, eff_leverage
 
 
 async def _run_async(testnet: bool) -> None:
@@ -189,64 +375,688 @@ async def _run_async(testnet: bool) -> None:
     model_payload = _load_model()
     sl_pct: float = model_payload.get("sl_pct", 0.005)
     tp_pct: float = model_payload.get("tp_pct", 0.015)
-    broadcast({"phase": "server", "msg": f"Model yüklendi | SL={sl_pct*100:.1f}% TP={tp_pct*100:.1f}%"})
+    bidir  = model_payload.get("direction", "LONG") == "BIDIR"
+    broadcast({"phase": "server",
+               "msg": f"Model yüklendi | {'LONG+SHORT' if bidir else model_payload.get('direction','LONG')} | SL={sl_pct*100:.1f}% TP={tp_pct*100:.1f}%"})
 
-    exchange = _build_exchange(testnet)
-    db = Database()
+    paper_mode = testnet  # True → demo kasa, emir yok
+    exchange   = _build_exchange()
+    db         = Database()
     await db.connect()
 
+    if not paper_mode:
+        for sym in SYMBOLS:
+            _set_leverage(exchange, sym)
+
+    # ── Demo kasa ────────────────────────────────────────────────────────────
+    demo_balance   = DEMO_START_BALANCE
+    peak_balance   = DEMO_START_BALANCE   # dinamik position sizing için en yüksek bakiye
+    demo_positions: Dict[str, Dict] = {}   # sym → {entry, tp, sl, side, ts, proba}
+    demo_trades:    List[Dict] = []
+    analysis_window: Deque[Dict] = deque(maxlen=50)  # son 50 işlemin analizi
+    _retrain_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    realized_pnl = 0.0     # gün içi gerçekleşen PnL (günlük fren kontrolü için)
+    day_start_balance = DEMO_START_BALANCE   # gün başı bakiye — yüzde frenlerin paydası
+    daily_paused = False   # kayıp freni / kâr kilidi devredeyse o gün yeni işlem yok
+
+    _last_prices: Dict[str, float] = {}
+
+    def _broadcast_wallet():
+        # Açık pozisyonlar için gerçek zamanlı unrealized PnL
+        unrealized = 0.0
+        for sym, pos in demo_positions.items():
+            price = _last_prices.get(sym, pos["entry"])
+            raw_ret = (price - pos["entry"]) / pos["entry"]
+            is_long = pos["side"] == "LONG"
+            unrealized += pos["notional"] * raw_ret * (1 if is_long else -1)
+
+        total_pnl = (demo_balance - DEMO_START_BALANCE) + unrealized
+        broadcast({
+            "phase":        "wallet",
+            "balance":      round(demo_balance, 4),
+            "start":        DEMO_START_BALANCE,
+            "pnl":          round(total_pnl, 4),
+            "pnl_pct":      round(total_pnl / DEMO_START_BALANCE * 100, 2),
+            "open_count":   len(demo_positions),
+            "trade_count":  len(demo_trades),
+            "unrealized":   round(unrealized, 4),
+        })
+
+    def _broadcast_positions():
+        """Açık pozisyonları unrealized PnL ile birlikte yayınla."""
+        positions = []
+        for sym, pos in demo_positions.items():
+            price   = _last_prices.get(sym, pos["entry"])
+            raw_ret = (price - pos["entry"]) / pos["entry"]
+            is_long = pos["side"] == "LONG"
+            upnl    = pos["notional"] * raw_ret * (1 if is_long else -1)
+            upnl_pct = (upnl / pos["margin"]) * 100  # teminat üzerinden %
+            positions.append({
+                "symbol":        sym,
+                "side":          pos["side"],
+                "entry":         round(pos["entry"], 4),
+                "current_price": round(price, 4),
+                "tp":            round(pos["tp"], 4),
+                "sl":            round(pos["sl"], 4),
+                "upnl":          round(upnl, 4),
+                "upnl_pct":      round(upnl_pct, 2),
+                "open_ts":       pos.get("ts", 0),
+                "proba":         round(pos.get("proba", 0), 3),
+                "db_id":         pos.get("db_id"),
+                "margin":        pos["margin"],
+                "notional":      pos["notional"],
+                "leverage":      pos.get("leverage", LEVERAGE),
+            })
+        broadcast({"phase": "positions", "positions": positions})
+
+    # Anlık mum verisi — WS'den güncellenir, SL/TP kontrolünde kullanılır
+    _last_candles: Dict[str, Dict] = {}              # sym → {price, high, low}
+    _candle_buffer: Dict[str, Deque] = {}            # sym → kapanmış mumlar (maxlen=200)
+    _last_error_ts: Dict[str, float] = {}            # Telegram hata spam önleme
+
+    async def _ticker():
+        """
+        Binance Futures WebSocket kline_1m stream.
+        Anlık fiyat + cari mum high/low → SL/TP kontrolü için REST yok.
+        Bağlantı koparsa 3 saniyede otomatik yeniden bağlanır.
+        """
+        nonlocal demo_balance, realized_pnl, peak_balance
+        from websockets.asyncio.client import connect as _ws_connect
+
+        # kline_1m: her tick'te cari mum o/h/l/c gelir
+        streams = "/".join(s.replace("/", "").lower() + "@kline_1m" for s in SYMBOLS)
+        ws_url  = f"wss://fstream.binance.com/stream?streams={streams}"
+
+        # Sembol eşleme: BTCUSDT → BTC/USDT
+        _raw_to_sym = {s.replace("/", ""): s for s in SYMBOLS}
+
+        async def _price_loop():
+            while not _stop_flag:
+                try:
+                    async with _ws_connect(ws_url, ping_interval=20, ping_timeout=10) as ws:
+                        broadcast({"phase": "server", "msg": "Fiyat WebSocket (kline_1m) kuruldu"})
+                        async for raw in ws:
+                            if _stop_flag:
+                                return
+                            try:
+                                k = json.loads(raw).get("data", {}).get("k", {})
+                                if not k:
+                                    continue
+                                raw_sym = k["s"]   # BTCUSDT
+                                sym = _raw_to_sym.get(raw_sym)
+                                if sym:
+                                    _last_prices[sym]   = float(k["c"])
+                                    _last_candles[sym]  = {
+                                        "price": float(k["c"]),
+                                        "high":  float(k["h"]),
+                                        "low":   float(k["l"]),
+                                    }
+                                    if k.get("x"):  # mum kapandı — buffer'a ekle
+                                        buf = _candle_buffer.setdefault(
+                                            sym, deque(maxlen=CANDLE_BUFFER_SIZE))
+                                        last_ts = buf[-1]["timestamp"] if buf else 0
+                                        if int(k["t"]) > last_ts:  # REST fallback ile çakışma önle
+                                            buf.append({
+                                                "timestamp": int(k["t"]),
+                                                "open":   float(k["o"]),
+                                                "high":   float(k["h"]),
+                                                "low":    float(k["l"]),
+                                                "close":  float(k["c"]),
+                                                "volume": float(k["v"]),
+                                            })
+                            except Exception:
+                                pass
+                except Exception as e:
+                    if not _stop_flag:
+                        broadcast({"phase": "server",
+                                   "msg": f"WS koptu, 3 sn sonra yeniden bağlanıyor: {e}"})
+                        await asyncio.sleep(3)
+
+        async def _rest_price_loop():
+            """
+            REST fiyat güvenlik ağı — 5 sn'de bir son mumları çeker.
+            Bazı ağlarda Binance WS bağlanıyor ama market datası HİÇ akmıyor
+            (ISS/bölge filtresi); bot bu durumda fiyatsız kalıp sonsuza dek
+            sinyal atlıyordu. WS tick gelirse bu döngü sadece yedek görevi görür.
+            """
+            announced = False
+            while not _stop_flag:
+                for sym in SYMBOLS:
+                    try:
+                        rows = await asyncio.to_thread(_fetch_recent_klines, sym, 3)
+                        if not rows:
+                            continue
+                        open_k = rows[-1]   # son satır = henüz kapanmamış cari mum
+                        _last_prices[sym]  = float(open_k[4])
+                        _last_candles[sym] = {
+                            "price": float(open_k[4]),
+                            "high":  float(open_k[2]),
+                            "low":   float(open_k[3]),
+                        }
+                        buf = _candle_buffer.setdefault(sym, deque(maxlen=CANDLE_BUFFER_SIZE))
+                        last_ts = buf[-1]["timestamp"] if buf else 0
+                        for r in rows[:-1]:   # kapanmış mumlar
+                            if int(r[0]) > last_ts:
+                                buf.append({
+                                    "timestamp": int(r[0]),
+                                    "open":   float(r[1]),
+                                    "high":   float(r[2]),
+                                    "low":    float(r[3]),
+                                    "close":  float(r[4]),
+                                    "volume": float(r[5]),
+                                })
+                        if not announced:
+                            announced = True
+                            broadcast({"phase": "server",
+                                       "msg": "REST fiyat beslemesi aktif (5 sn) — WS yedekli çalışıyor"})
+                    except Exception:
+                        pass   # geçici ağ hatası — sonraki turda tekrar dene
+                await asyncio.sleep(5)
+
+        price_task = asyncio.create_task(_price_loop())
+        rest_task  = asyncio.create_task(_rest_price_loop())
+
+        try:
+            # ── 1 saniyelik döngü: manuel kapat + wallet/position broadcast ──
+            while not _stop_flag:
+                for sym in list(_manual_close_requests):
+                    _manual_close_requests.discard(sym)
+                    if sym not in demo_positions:
+                        continue
+                    pos        = demo_positions.pop(sym)
+                    exit_price = _last_prices.get(sym, pos["entry"])
+                    is_long    = pos["side"] == "LONG"
+                    raw_ret    = (exit_price - pos["entry"]) / pos["entry"]
+                    pnl_raw    = pos["notional"] * raw_ret * (1 if is_long else -1)
+                    fee        = pos["notional"] * (FEE_RATE + SLIPPAGE_RATE)
+                    pnl_net    = pnl_raw - fee   # kasa akışı (giriş ücreti açılışta düşüldü)
+                    pnl_rep    = pnl_net - pos.get("entry_fee", 0.0)   # rapor: giriş dahil
+                    pnl_pct    = (pnl_rep / pos["margin"]) * 100
+                    demo_balance += pnl_net
+                    peak_balance  = max(peak_balance, demo_balance)
+                    realized_pnl += pnl_net
+                    demo_trades.append({"result": "MANUAL", "pnl": pnl_rep, "sym": sym})
+                    if pos.get("db_id"):
+                        await db.close_trade(pos["db_id"], round(exit_price, 4),
+                                             int(time.time() * 1000), "MANUAL", round(pnl_rep, 4))
+                    broadcast({
+                        "phase": "trade_close", "symbol": sym, "result": "MANUAL",
+                        "entry": round(pos["entry"], 4), "exit": round(exit_price, 4),
+                        "pnl": round(pnl_rep, 4), "pnl_pct": round(pnl_pct, 2), "paper": True,
+                    })
+                    broadcast({"phase": "server", "msg": f"{sym} manuel kapatıldı @ {exit_price:.2f}"})
+                    pnl_sign = "+" if pnl_rep >= 0 else ""
+                    tg.send_async(
+                        f"🖐 <b>Manuel Kapatma | {sym}</b>\n"
+                        f"Çıkış: {exit_price:.2f}\n"
+                        f"PnL: <b>{pnl_sign}{pnl_rep:.3f} USDT ({pnl_sign}{pnl_pct:.2f}%)</b>\n"
+                        f"Kasa: <b>{demo_balance:.2f} USDT</b>"
+                    )
+
+                _broadcast_wallet()
+                _broadcast_positions()
+                await asyncio.sleep(1)
+        finally:
+            price_task.cancel()
+            rest_task.cancel()
+
+    mode_label = f"PAPER (demo kasa: {DEMO_START_BALANCE} USDT)" if paper_mode else "CANLI"
+    dir_label  = "LONG+SHORT" if bidir else model_payload.get("direction", "LONG")
+    bot_start_ts = int(time.time())
+    broadcast({"phase": "bot_start", "ts": bot_start_ts})
+    broadcast({"phase": "server",
+               "msg": f"Trader başladı | {mode_label} | Yön={dir_label} | {SYMBOLS}"})
+    tg.send_async(
+        f"🤖 <b>Bot Başladı</b>\n"
+        f"Mod: {mode_label}\n"
+        f"Yön: {dir_label} | Kaldıraç: {LEVERAGE}x\n"
+        f"Demo Kasa: <b>{DEMO_START_BALANCE:.2f} USDT</b>"
+    )
+    _broadcast_wallet()
+
+    # ── Yeniden başlatmada önceki açık paper trade'leri temizle ──────────────
+    try:
+        await db.conn.execute(
+            "UPDATE trades SET status='cancelled', exit_reason='BOT_RESTART', exit_ts=? WHERE status='open'",
+            (int(time.time() * 1000),),
+        )
+        await db.conn.commit()
+    except Exception:
+        pass
+
+    # ── Başlangıç mum buffer'ı — REST, sadece bir kez ────────────────────────
     for sym in SYMBOLS:
-        _set_leverage(exchange, sym)
+        _candle_buffer[sym] = deque(maxlen=CANDLE_BUFFER_SIZE)
+    for sym in SYMBOLS:
+        for attempt in range(3):
+            try:
+                df_init = _fetch_ohlcv(exchange, sym, limit=CANDLE_BUFFER_SIZE)
+                for _, row in df_init.iterrows():
+                    _candle_buffer[sym].append(row.to_dict())
+                broadcast({"phase": "server",
+                           "msg": f"{sym} başlangıç verisi yüklendi ({len(_candle_buffer[sym])} mum)"})
+                break
+            except Exception as e_init:
+                if attempt < 2:
+                    broadcast({"phase": "server",
+                               "msg": f"{sym} veri yüklenemedi (deneme {attempt+1}/3): {e_init}"})
+                    await asyncio.sleep(5)
+                else:
+                    broadcast({"phase": "server",
+                               "msg": f"{sym} başlangıç verisi alınamadı — WS buffer dolana kadar sinyal bekle"})
 
-    broadcast({"phase": "server", "msg": f"Trader döngüsü başladı | Semboller: {SYMBOLS}"})
+    # ── 1d buffer — sadece başlangıçta yükle ─────────────────────────────────
+    _d1_buffer: Dict[str, Optional[pd.DataFrame]] = {}
+    for sym in SYMBOLS:
+        for attempt in range(3):
+            try:
+                _d1_buffer[sym] = _fetch_ohlcv_1d(sym, limit=60)
+                broadcast({"phase": "server",
+                           "msg": f"{sym} günlük veri yüklendi ({len(_d1_buffer[sym])} bar)"})
+                break
+            except Exception as e_d1:
+                if attempt < 2:
+                    await asyncio.sleep(5)
+                else:
+                    _d1_buffer[sym] = None
+                    broadcast({"phase": "server",
+                               "msg": f"{sym} günlük veri alınamadı — 1d özellikler devre dışı"})
 
+    ticker_task = asyncio.create_task(_ticker())
+    loss_day = time.strftime("%Y-%m-%d", time.gmtime())   # günlük kayıp limiti UTC gün bazlı
     try:
         while not _stop_flag:
-            open_syms = _sync_positions(exchange, db)
+            # ── Günlük frenler: yeni UTC gününde sıfırla ─────────────────────
+            today = time.strftime("%Y-%m-%d", time.gmtime())
+            if today != loss_day:
+                loss_day = today
+                if realized_pnl != 0.0 or daily_paused:
+                    broadcast({"phase": "server",
+                               "msg": f"Yeni gün — günlük PnL sayacı sıfırlandı (önceki: {realized_pnl:+.2f} USDT)"})
+                realized_pnl = 0.0
+                day_start_balance = demo_balance
+                daily_paused = False
 
+            # ── Paper: Açık pozisyon SL/TP kontrolü ─────────────────────────
+            if paper_mode:
+                balance_delta = 0.0
+                for sym in list(demo_positions.keys()):
+                    try:
+                        candle = _last_candles.get(sym)
+                        if not candle:
+                            continue   # WS henüz veri almadı, atla
+                        pos  = demo_positions[sym]
+                        h, l = candle["high"], candle["low"]
+                        is_long = pos["side"] == "LONG"
+                        tp_hit  = h >= pos["tp"] if is_long else l <= pos["tp"]
+                        sl_hit  = l <= pos["sl"] if is_long else h >= pos["sl"]
+
+                        if tp_hit or sl_hit:
+                            result = "TP" if (tp_hit and not sl_hit) else "SL"
+                            exit_price = pos["tp"] if result == "TP" else pos["sl"]
+                            raw_ret = (exit_price - pos["entry"]) / pos["entry"]
+                            pnl_raw = pos["notional"] * raw_ret * (1 if is_long else -1)
+                            # backtest ile aynı maliyet modeli: çıkış komisyonu + slippage
+                            fee     = pos["notional"] * (FEE_RATE + SLIPPAGE_RATE)
+                            pnl_net = pnl_raw - fee   # kasa akışı (giriş ücreti açılışta düşüldü)
+                            # Rapor PnL'i giriş ücretini de içerir — kasayla tutarlı
+                            pnl_rep = pnl_net - pos.get("entry_fee", 0.0)
+                            pnl_pct = (pnl_rep / pos["margin"]) * 100
+                            balance_delta += pnl_net
+                            realized_pnl  += pnl_net
+                            # DB'de trade'i kapat
+                            if pos.get("db_id"):
+                                await db.close_trade(
+                                    pos["db_id"],
+                                    round(exit_price, 4),
+                                    int(time.time() * 1000),
+                                    result,
+                                    round(pnl_rep, 4),
+                                )
+                            demo_positions.pop(sym, None)
+                            demo_trades.append({"result": result, "pnl": pnl_rep, "sym": sym})
+
+                            # ── Öz-analiz ────────────────────────────────────
+                            rec = {
+                                "sym":    sym,
+                                "result": result,
+                                "pnl":    round(pnl_rep, 4),
+                                "proba":  pos.get("proba", 0),
+                                "correct": result == "TP",
+                            }
+                            analysis_window.append(rec)
+                            recent = list(analysis_window)
+                            n = len(recent)
+                            rolling_wr = sum(1 for r in recent if r["correct"]) / n if n else 0
+                            avg_proba  = sum(r["proba"] for r in recent) / n if n else 0
+                            broadcast({
+                                "phase":      "trade_analysis",
+                                "symbol":     sym,
+                                "result":     result,
+                                "pnl":        round(pnl_rep, 4),
+                                "pnl_pct":    round(pnl_pct, 2),
+                                "proba":      pos.get("proba", 0),
+                                "correct":    result == "TP",
+                                "rolling_wr": round(rolling_wr, 3),
+                                "rolling_n":  n,
+                                "avg_proba":  round(avg_proba, 3),
+                            })
+
+                            # ── Her 20 işlemde otomatik yeniden eğitim ───────
+                            total_closed = len(demo_trades)
+                            if total_closed > 0 and total_closed % 20 == 0:
+                                broadcast({"phase": "server",
+                                           "msg": f"{total_closed} işlem tamamlandı — model güncelleniyor..."})
+                                def _retrain():
+                                    global _model_updating
+                                    nonlocal model_payload, sl_pct, tp_pct
+                                    _model_updating = True
+                                    try:
+                                        import train_engine
+                                        train_engine.broadcast = broadcast
+                                        train_engine.main(run_server=False, days=RETRAIN_DAYS)
+                                        if MODEL_PATH.exists():
+                                            model_payload = _load_model()
+                                            # yeni modelin SL/TP'sini de devral
+                                            sl_pct = model_payload.get("sl_pct", sl_pct)
+                                            tp_pct = model_payload.get("tp_pct", tp_pct)
+                                            broadcast({"phase": "server",
+                                                       "msg": f"Model yeniden yüklendi | SL={sl_pct*100:.1f}% TP={tp_pct*100:.1f}%"})
+                                    except Exception as ex:
+                                        err_msg = f"Yeniden eğitim hatası: {ex}"
+                                        broadcast({"phase": "error", "msg": err_msg})
+                                        tg.send_async(f"❌ <b>Eğitim Hatası</b>\n{err_msg}")
+                                    finally:
+                                        _model_updating = False
+                                loop = asyncio.get_event_loop()
+                                loop.run_in_executor(_retrain_executor, _retrain)
+
+                            broadcast({
+                                "phase": "trade_close",
+                                "symbol": sym, "result": result,
+                                "entry": round(pos["entry"], 4),
+                                "exit":  round(exit_price, 4),
+                                "pnl":   round(pnl_rep, 4),
+                                "pnl_pct": round(pnl_pct, 2),
+                                "paper": True,
+                            })
+                            close_emoji = "✅" if result == "TP" else "❌"
+                            pnl_sign    = "+" if pnl_rep >= 0 else ""
+                            tg.send_async(
+                                f"{close_emoji} <b>{result} | {sym}</b>\n"
+                                f"Giriş: {pos['entry']:.2f}  →  Çıkış: {exit_price:.2f}\n"
+                                f"PnL: <b>{pnl_sign}{pnl_rep:.3f} USDT ({pnl_sign}{pnl_pct:.2f}%)</b>\n"
+                                f"Kasa: <b>{demo_balance + balance_delta:.2f} USDT</b>"
+                            )
+                    except Exception as e:
+                        broadcast({"phase": "error", "msg": f"{sym} SL/TP kontrol hatası: {e}"})
+                        tg.send_async(f"⚠️ <b>SL/TP Hatası | {sym}</b>\n{e}")
+
+                if balance_delta != 0.0:
+                    demo_balance += balance_delta
+                    peak_balance  = max(peak_balance, demo_balance)
+                    _broadcast_wallet()
+
+                # ── Günlük frenler: kayıp freni + kâr kilidi ──────────────
+                # Bot durmaz; sadece O GÜN yeni pozisyon açmaz. Açık
+                # pozisyonların SL/TP takibi devam eder; ertesi gün sıfırlanır.
+                if not daily_paused and day_start_balance > 0:
+                    day_ret = realized_pnl / day_start_balance
+                    if day_ret <= DAILY_LOSS_LIMIT_PCT:
+                        daily_paused = True
+                        broadcast({"phase": "server",
+                                   "msg": f"Günlük kayıp freni: {day_ret*100:+.2f}% — bugün yeni işlem yok"})
+                        tg.send_async(
+                            f"🛑 <b>Günlük Kayıp Freni</b>\n"
+                            f"Gün içi: {day_ret*100:+.2f}% ({realized_pnl:+.2f} USDT)\n"
+                            f"Bugün yeni işlem açılmayacak; yarın devam.\n"
+                            f"Kasa: <b>{demo_balance:.2f} USDT</b>"
+                        )
+                    elif day_ret >= DAILY_PROFIT_LOCK_PCT:
+                        daily_paused = True
+                        broadcast({"phase": "server",
+                                   "msg": f"Günlük kâr kilidi: {day_ret*100:+.2f}% — hedefe ulaşıldı, bugün yeni işlem yok"})
+                        tg.send_async(
+                            f"🔒 <b>Günlük Kâr Kilidi!</b>\n"
+                            f"Gün içi: <b>{day_ret*100:+.2f}%</b> ({realized_pnl:+.2f} USDT)\n"
+                            f"Hedefe ulaşıldı — kâr korunuyor, yarın devam.\n"
+                            f"Kasa: <b>{demo_balance:.2f} USDT</b>"
+                        )
+
+            if _stop_flag:
+                break
+
+            open_syms = list(demo_positions.keys()) if paper_mode else []
+
+            # ── Retrain veya günlük fren sırasında yeni pozisyon açma ────────
+            if _model_updating or daily_paused:
+                await asyncio.sleep(LOOP_INTERVAL)
+                continue
+
+            # ── Sinyal üret ──────────────────────────────────────────────────
             for sym in SYMBOLS:
                 if _stop_flag:
                     break
                 if sym in open_syms:
-                    continue  # Zaten açık pozisyon var
+                    continue
 
                 try:
-                    df = _fetch_ohlcv(exchange, sym, limit=100)
-                    features = _compute_features(df)
-                    if features is None:
+                    buf = list(_candle_buffer.get(sym, deque()))
+                    if len(buf) < 30:
+                        broadcast({"phase": "server",
+                                   "msg": f"{sym} buffer dolmadı ({len(buf)}/30), bekleniyor"})
+                        continue
+                    df = pd.DataFrame(buf)
+                    features = _compute_features(df, _d1_buffer.get(sym))
+                    entry_price = _last_prices.get(sym)
+                    if entry_price is None:
+                        broadcast({"phase": "server",
+                                   "msg": f"{sym} anlık fiyat henüz yok (WS tick bekleniyor) — atlandı"})
                         continue
 
-                    pred, proba = _predict(model_payload, features)
+                    if features is None:
+                        broadcast({"phase": "server",
+                                   "msg": f"{sym} özellikler hesaplanamadı (NaN/eksik veri) — atlandı"})
+                        continue
+
+                    # ── Volatility-Adjusted Threshold ────────────────────────
+                    # senkron HTTP'yi thread'e al — event loop'u bloklamasın
+                    fng      = await asyncio.to_thread(_fetch_fear_greed)
+                    fng_adj  = 0.05 if (fng < 20 or fng > 80) else 0.0
+                    # SIGNAL_MARGIN: eşiği kıl payı geçen sinyaller elenir —
+                    # daha az ama daha isabetli işlem (kararlılık paketi)
+                    thr_adj  = _calc_dynamic_threshold(fng_adj, features, sym) + SIGNAL_MARGIN
+
+                    # ── Çift yönlü tahmin ─────────────────────────────────────
+                    pred_long, proba_long, pred_short, proba_short = \
+                        _predict_bidir(model_payload, features, thr_adj)
+
+                    # ── Hard MTF Filtreleri ───────────────────────────────────
+                    h1_adx_val   = features.get("h1_adx", 25.0)
+                    h1_ema_cross = features.get("h1_ema_cross", 0.0)
+                    if h1_adx_val < 20:            # ranging piyasa — tüm sinyalleri durdur
+                        broadcast({"phase": "server",
+                                   "msg": f"{sym} 1h ADX={h1_adx_val:.1f} < 20 (ranging) — sinyal atlandı"})
+                        continue
+                    # Trend vetosu GÜVEN ÖLÇEKLİ: sıradan karşı-trend sinyaller
+                    # elenir; eşiği TREND_VETO_MARGIN kadar aşan güçlü sinyaller
+                    # geçer (mutlak veto, SHORT-ağırlıklı model + yukarı trendde
+                    # botu günlerce kilitliyordu)
+                    thr_l_eff = float(model_payload.get("threshold_long", 0.5)) + thr_adj
+                    thr_s_eff = float(model_payload.get("threshold_short", 0.5)) + thr_adj
+                    if pred_long == 1 and h1_ema_cross < 0:    # LONG ama 1h trendi aşağı
+                        if proba_long >= thr_l_eff + TREND_VETO_MARGIN:
+                            broadcast({"phase": "server",
+                                       "msg": f"{sym} LONG karşı-trend ama sinyal çok güçlü (p={proba_long:.2f}) — veto delindi"})
+                        else:
+                            broadcast({"phase": "server",
+                                       "msg": f"{sym} LONG sinyali var ancak 1h trendi bearish — atlandı"})
+                            pred_long = 0
+                    if pred_short == 1 and h1_ema_cross > 0:   # SHORT ama 1h trendi yukarı
+                        if proba_short >= thr_s_eff + TREND_VETO_MARGIN:
+                            broadcast({"phase": "server",
+                                       "msg": f"{sym} SHORT karşı-trend ama sinyal çok güçlü (p={proba_short:.2f}) — veto delindi"})
+                        else:
+                            broadcast({"phase": "server",
+                                       "msg": f"{sym} SHORT sinyali var ancak 1h trendi bullish — atlandı"})
+                            pred_short = 0
+
+                    # ── Order Book filtresi ───────────────────────────────────
+                    ob_imbalance = await asyncio.to_thread(_fetch_order_book_imbalance, sym)
+                    if ob_imbalance < -0.15: pred_long  = 0   # bids zayıf → LONG iyi değil
+                    if ob_imbalance >  0.15: pred_short = 0   # asks zayıf → SHORT iyi değil
+
+                    # ── Her iki yön aynı anda ateşlenirse güçlü olanı al ─────
+                    if pred_long == 1 and pred_short == 1:
+                        if proba_long >= proba_short:
+                            pred_short = 0
+                        else:
+                            pred_long = 0
+
+                    any_signal = pred_long or pred_short
+                    sig_dir    = "LONG" if pred_long else ("SHORT" if pred_short else "—")
+                    sig_proba  = proba_long if pred_long else proba_short
+
                     broadcast({
                         "phase": "signal",
                         "symbol": sym,
-                        "pred": pred,
-                        "proba": round(proba, 4),
+                        "pred":   1 if any_signal else 0,
+                        "proba":  round(sig_proba, 4),
+                        "price":  round(entry_price, 2),
+                        "direction": sig_dir,
+                        "ob_imbalance": round(ob_imbalance, 3),
+                        "fng":    fng,
+                        "thr_adj": round(thr_adj, 4),
+                        "proba_long":  round(proba_long, 4),
+                        "proba_short": round(proba_short, 4),
                     })
 
-                    if pred == 1 and len(open_syms) < MAX_POSITIONS:
-                        entry_price = float(df["close"].iloc[-1])
-                        order_id = _open_position(exchange, sym, entry_price, sl_pct, tp_pct)
-                        if order_id:
-                            ts = int(time.time() * 1000)
-                            trade_id = await db.insert_trade({
-                                "symbol": sym,
-                                "side": "LONG",
-                                "leverage": LEVERAGE,
-                                "entry_price": entry_price,
-                                "quantity_usdt": POSITION_USDT,
-                                "notional": POSITION_USDT * LEVERAGE,
-                                "entry_ts": ts,
+                    if any_signal and ob_imbalance and abs(ob_imbalance) > 0.15:
+                        broadcast({"phase": "server",
+                                   "msg": f"{sym} sinyal var ama emir defteri olumsuz (OB={ob_imbalance:.2f}) — gecildi"})
+
+                    # ── LONG aç ───────────────────────────────────────────────
+                    if pred_long == 1 and sym not in open_syms and len(open_syms) < MAX_POSITIONS:
+                        is_long  = True
+                        proba    = proba_long
+                        tp_price = entry_price * (1 + tp_pct)
+                        sl_price = entry_price * (1 - sl_pct)
+                        chosen_dir = "LONG"
+                    # ── SHORT aç ──────────────────────────────────────────────
+                    elif pred_short == 1 and sym not in open_syms and len(open_syms) < MAX_POSITIONS:
+                        is_long  = False
+                        proba    = proba_short
+                        tp_price = entry_price * (1 - tp_pct)
+                        sl_price = entry_price * (1 + sl_pct)
+                        chosen_dir = "SHORT"
+                    else:
+                        continue
+
+                    if True:   # pozisyon açma bloğu (indentasyonu koru)
+
+                        if paper_mode:
+                            # Dinamik pozisyon boyutu + kaldıraç
+                            margin, eff_leverage = _calc_position_margin(
+                                demo_balance, peak_balance, demo_trades, sl_pct, tp_pct
+                            )
+                            # Korelasyon koruması: BTC-ETH ~0.9 korele — aynı yönde
+                            # ikinci pozisyon fiilen çift risk → yarım boyut
+                            if any(p["side"] == chosen_dir for p in demo_positions.values()):
+                                margin *= 0.5
+                            notional  = margin * eff_leverage
+                            entry_fee = notional * FEE_RATE
+                            demo_balance -= entry_fee
+                            ts_now = int(time.time() * 1000)
+                            db_id = await db.insert_trade({
+                                "symbol":        sym,
+                                "side":          chosen_dir,
+                                "leverage":      eff_leverage,
+                                "entry_price":   entry_price,
+                                "quantity_usdt": margin,
+                                "notional":      notional,
+                                "entry_ts":      ts_now,
+                                "paper":         True,
                             })
-                            broadcast({"phase": "trade_open", "symbol": sym, "db_id": trade_id})
+                            demo_positions[sym] = {
+                                "entry":     entry_price,
+                                "tp":        tp_price,
+                                "sl":        sl_price,
+                                "side":      chosen_dir,
+                                "ts":        ts_now,
+                                "db_id":     db_id,
+                                "proba":     proba,
+                                "margin":    margin,
+                                "notional":  notional,
+                                "leverage":  eff_leverage,
+                                "entry_fee": entry_fee,
+                            }
+                            dd_pct = (peak_balance - demo_balance) / peak_balance * 100 if peak_balance > 0 else 0
                             open_syms.append(sym)
+                            broadcast({
+                                "phase": "trade_open",
+                                "symbol": sym, "side": chosen_dir,
+                                "entry": round(entry_price, 4),
+                                "tp":    round(tp_price, 4),
+                                "sl":    round(sl_price, 4),
+                                "paper": True,
+                            })
+                            side_emoji = "📈" if chosen_dir == "LONG" else "📉"
+                            tg.send_async(
+                                f"{side_emoji} <b>{sym} {chosen_dir} Açıldı</b>\n"
+                                f"Giriş: <b>{entry_price:.2f}</b>\n"
+                                f"TP: {tp_price:.2f}  |  SL: {sl_price:.2f}\n"
+                                f"Marjin: {margin:.2f} USDT × {eff_leverage}x = {notional:.2f} USDT\n"
+                                f"Sinyal gücü: {proba*100:.1f}%\n"
+                                f"Kasa: <b>{demo_balance:.2f} USDT</b>"
+                            )
+                            _broadcast_wallet()
+                        else:
+                            # Canlı mod: borsadaki gerçek USDT bakiyesi ile boyutlandır
+                            try:
+                                bal = await asyncio.to_thread(exchange.fetch_balance)
+                                usdt_free = float(bal.get("USDT", {}).get("free") or 0.0)
+                            except Exception as e_bal:
+                                broadcast({"phase": "error",
+                                           "msg": f"Bakiye okunamadı, işlem atlandı: {e_bal}"})
+                                continue
+                            if usdt_free < 5.0:
+                                broadcast({"phase": "server",
+                                           "msg": f"Yetersiz bakiye ({usdt_free:.2f} USDT) — işlem atlandı"})
+                                continue
+                            margin, eff_leverage = _calc_position_margin(
+                                usdt_free, usdt_free, [], sl_pct, tp_pct
+                            )
+                            notional = margin * eff_leverage
+                            order_id = await asyncio.to_thread(
+                                _open_live_position, exchange, sym, chosen_dir,
+                                entry_price, sl_pct, tp_pct, notional,
+                            )
+                            if order_id:
+                                ts = int(time.time() * 1000)
+                                await db.insert_trade({
+                                    "symbol":         sym,
+                                    "side":           chosen_dir,
+                                    "leverage":       eff_leverage,
+                                    "entry_price":    entry_price,
+                                    "quantity_usdt":  margin,
+                                    "notional":       notional,
+                                    "entry_ts":       ts,
+                                    "paper":          False,
+                                })
+                                open_syms.append(sym)
 
                 except Exception as e:
-                    broadcast({"phase": "error", "msg": f"{sym} döngü hatası: {e}"})
+                    msg = f"{sym} döngü hatası: {e}"
+                    broadcast({"phase": "error", "msg": msg})
+                    now = time.time()
+                    if now - _last_error_ts.get(sym, 0) > 300:  # 5 dakikada bir Telegram
+                        tg.send_async(f"⚠️ <b>Bot Hatası</b>\n{msg}")
+                        _last_error_ts[sym] = now
 
             await asyncio.sleep(LOOP_INTERVAL)
 
     finally:
+        ticker_task.cancel()
         await db.close()
         try:
             exchange.close()
