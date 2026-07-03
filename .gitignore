@@ -24,3 +24,7 @@ build/
 
 # IDE
 .vscode/
+
+# Obsidian (kasa ayarları kişiseldir, notlar versiyonlanır)
+.obsidian/
+brain/.obsidian/

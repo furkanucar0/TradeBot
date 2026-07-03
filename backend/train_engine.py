@@ -953,6 +953,27 @@ def main(run_server: bool = True, days: int = 0) -> None:
         broadcast({"phase": "report", "msg": "model_runs kaydı eklendi"})
     except Exception as e:
         broadcast({"phase": "report", "msg": f"model_runs kaydedilemedi: {e}"})
+
+    # ── Obsidian beyni: eğitim günlüğüne otomatik kayıt ──────────────────────
+    try:
+        journal = (Path(__file__).resolve().parent.parent
+                   / "brain" / "03-Deneyler" / "Eğitim-Günlüğü.md")
+        if journal.parent.exists():
+            with journal.open("a", encoding="utf-8") as f:
+                f.write(
+                    f"\n### {time.strftime('%Y-%m-%d %H:%M')}\n"
+                    f"- Pencere: {'son ' + str(days) + ' gün' if days else 'tüm veri'} | temiz satır: {len(df_feat)}\n"
+                    f"- SL/TP: {best_sl*100:.1f}%/{best_tp*100:.1f}% (R:R {best_tp/best_sl:.1f}) | "
+                    f"rapor yönü: {report_dir} | thrL={thr_long:.2f} thrS={thr_short:.2f}\n"
+                    f"- Test: {results['trades']} işlem | WR {results['win_rate']:.1%} | "
+                    f"PnL {results['total_pnl']:+.2f} USDT | Sharpe {results['sharpe']:.2f} | "
+                    f"MaxDD {results['max_drawdown']:.1%}\n"
+                    f"- Günlük ort {results.get('daily_avg_pct', 0):+.2f}% | "
+                    f"en kötü gün {results.get('daily_worst_pct', 0):+.2f}% | "
+                    f"Canlı hazır: {'✓ EVET' if ready else '✗ HAYIR'}\n"
+                )
+    except Exception:
+        pass
     msg_ready = (
         f"Canli Hazir! WR={results['win_rate']:.1%}>={dynamic_wr_target:.1%} "
         f"R:R={rr:.1f}>={RR_TARGET} Sharpe={results['sharpe']:.2f}"
