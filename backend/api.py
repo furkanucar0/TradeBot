@@ -38,6 +38,8 @@ _bot_state: Dict[str, Any] = {
 
 def _push_event(ev: Dict[str, Any]) -> None:
     ev = {"ts": time.time(), **ev}
+    if ev.get("phase") == "health":
+        _bot_state["last_health"] = ev   # /health endpoint'i için önbellek
     with _clients_lock:
         for q in list(_clients):
             try:
@@ -244,6 +246,17 @@ async def get_candles(symbol: str, limit: int = 200, since: int = 0):
         {"time": r[0] // 1000, "open": r[1], "high": r[2], "low": r[3], "close": r[4], "volume": r[5]}
         for r in rows
     ]
+
+
+# ── Health (K-18 / FAZ 2) ─────────────────────────────────────────────────────
+@app.get("/health")
+async def get_health():
+    """Botun son sağlık skoru (bot çalışırken 15 sn'de bir güncellenir)."""
+    h = _bot_state.get("last_health")
+    if not h:
+        return {"score": None, "status": "VERİ YOK",
+                "msg": "Bot çalışmıyor veya henüz ilk skor üretilmedi"}
+    return h
 
 
 # ── Backtest Results ──────────────────────────────────────────────────────────

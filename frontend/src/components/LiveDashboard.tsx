@@ -32,6 +32,13 @@ interface LivePosition {
   margin?: number; notional?: number; leverage?: number;
 }
 
+interface HealthComponent { weight: number; points: number; label: string }
+interface HealthState {
+  score: number; status: string;
+  components: Record<string, HealthComponent>;
+  balance?: number; open_positions?: number; daily_paused?: boolean;
+}
+
 function logColor(l: LogLevel) {
   if (l === 'profit') return 'text-green-400 bg-green-900/20 border-green-800'
   if (l === 'loss') return 'text-red-400 bg-red-900/20 border-red-800'
@@ -56,6 +63,7 @@ export default function LiveDashboard() {
   const [botStartTs, setBotStartTs] = useState(0)
   const [chartSymbol, setChartSymbol] = useState<'BTC' | 'ETH'>('BTC')
   const [tradeMarkers, setTradeMarkers] = useState<Record<'BTC' | 'ETH', SeriesMarker<Time>[]>>({ BTC: [], ETH: [] })
+  const [health, setHealth] = useState<HealthState | null>(null)
   const logsRef = useRef<HTMLDivElement>(null)
 
   // Status polling
@@ -174,6 +182,8 @@ export default function LiveDashboard() {
         const probaStr = `Sinyal gücü: ${(ev.proba * 100).toFixed(1)}%`
         const verdict = ev.correct ? '✓ Doğru tahmin' : '✗ Yanlış tahmin'
         pushLog('info', `ANALİZ ${ev.symbol} — ${verdict} | ${probaStr} | ${wrStr} | Ort sinyal: ${(ev.avg_proba * 100).toFixed(1)}%`)
+      } else if (phase === 'health') {
+        setHealth(ev as unknown as HealthState)
       } else if (phase === 'error') {
         pushLog('error', ev.msg || 'Hata')
       } else if (phase === 'server') {
@@ -341,6 +351,45 @@ export default function LiveDashboard() {
           />
         </div>
       </div>
+
+      {/* ── Sistem Sağlığı Şeridi (FAZ 2) ────────────────────────────── */}
+      {health && (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-2xl border border-slate-800 bg-slate-900/80 px-5 py-3">
+          <div className="flex items-center gap-2">
+            <span
+              className={`text-2xl font-bold tabular-nums ${
+                health.score >= 75 ? 'text-green-400' : health.score >= 50 ? 'text-yellow-400' : 'text-red-400'
+              }`}
+            >
+              {health.score}
+            </span>
+            <div className="leading-tight">
+              <div className="text-xs font-semibold text-white">Sağlık</div>
+              <div
+                className={`text-[10px] font-medium ${
+                  health.score >= 75 ? 'text-green-500' : health.score >= 50 ? 'text-yellow-500' : 'text-red-500'
+                }`}
+              >
+                {health.status}
+              </div>
+            </div>
+          </div>
+          <div className="h-8 w-px bg-slate-800" />
+          {Object.entries(health.components).map(([k, c]) => (
+            <div key={k} className="text-xs leading-tight">
+              <div className="text-slate-200 tabular-nums font-medium">
+                {c.points.toFixed(0)}<span className="text-slate-500">/{c.weight}</span>
+              </div>
+              <div className="text-slate-500">{c.label}</div>
+            </div>
+          ))}
+          {health.daily_paused && (
+            <span className="ml-auto rounded bg-amber-900/60 px-2 py-1 text-xs font-medium text-amber-300">
+              ⏸ Günlük fren aktif
+            </span>
+          )}
+        </div>
+      )}
 
       {/* ── Canlı Grafik ─────────────────────────────────────────────── */}
       <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5">

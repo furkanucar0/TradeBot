@@ -15,6 +15,8 @@ tags: [mimari]
 | Telegram | `backend/telegram_bot.py` | Uzaktan kontrol (süreç yönetimi + bot komutları) | — |
 | Frontend | `frontend/` (Vite/React) | Dashboard: canlı akış, grafik, metrikler, kasa | 5173 |
 | Özellikler | `backend/features.py` | **TEK özellik kaynağı** — eğitim ve canlı aynı kodu kullanır | — |
+| Konfig | `backend/config.py` | **TEK ayar kaynağı** (K-17) — tüm sabitler; mükerrer tanım yasak | — |
+| Sağlık | `backend/health.py` | 0-100 Health Score (K-18) — 15 sn'de bir yayın, /health, Telegram /health | — |
 | Veritabanı | `backend/bot.sqlite` | 3 tablo: historical_market_data, trades, model_runs | — |
 
 ## Veri Akışı

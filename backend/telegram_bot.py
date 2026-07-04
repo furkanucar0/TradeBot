@@ -316,6 +316,26 @@ def cmd_stop_all() -> str:
     )
 
 
+def cmd_health() -> str:
+    if not _api_ready():
+        return "⚠️ Backend çalışmıyor."
+    h = _api("get", "/health")
+    if not h or h.get("score") is None:
+        return "😴 Sağlık verisi yok — paper bot çalışmıyor olabilir (/paper)."
+    emoji = "🟢" if h["score"] >= 75 else ("🟡" if h["score"] >= 50 else "🔴")
+    lines = [
+        f"{emoji} <b>Sağlık Skoru: {h['score']}/100 — {h['status']}</b>",
+        f"Kasa: {h.get('balance', '?')} USDT | Açık poz: {h.get('open_positions', 0)}"
+        + (" | ⏸ günlük fren aktif" if h.get("daily_paused") else ""),
+        "",
+    ]
+    for name, c in (h.get("components") or {}).items():
+        bar = "▰" * int(round(c["points"] / c["weight"] * 5)) if c["weight"] else ""
+        bar = bar.ljust(5, "▱")
+        lines.append(f"{bar} {c['points']:.0f}/{c['weight']} — {c['label']}")
+    return "\n".join(lines)
+
+
 def cmd_status() -> str:
     be = "🟢 Açık" if _alive("backend")  else "🔴 Kapalı"
     fe = "🟢 Açık" if _alive("fetcher") else "🔴 Kapalı"
@@ -401,6 +421,7 @@ _HELP = (
     "/durdur_front — Sadece frontend'i durdur\n\n"
     "<b>── Bilgi ──</b>\n"
     "/status       — Anlık durum\n"
+    "/health       — Sağlık skoru (0-100)\n"
     "/help         — Bu mesaj"
 )
 
@@ -447,6 +468,9 @@ def _handle(text: str):
 
     elif cmd == "/status":
         _send(cmd_status())
+
+    elif cmd == "/health":
+        _send(cmd_health())
 
     else:
         _send(f"❓ Bilinmeyen komut: <code>{cmd}</code>\n/help yaz.")

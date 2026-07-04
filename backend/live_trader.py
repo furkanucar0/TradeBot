@@ -18,41 +18,25 @@ import numpy as np
 import pandas as pd
 import requests as _req
 
+from config import (
+    CANDLE_BUFFER_SIZE, DAILY_LOSS_LIMIT_PCT, DAILY_PROFIT_LOCK_PCT,
+    DEMO_START_BALANCE, FEE_RATE, LEVERAGE, LOOP_INTERVAL, MAX_POSITIONS,
+    RETRAIN_DAYS, RETRAIN_MIN_GAP_S, RETRAIN_MIN_TRADES, RISK_PER_TRADE,
+    SIGNAL_MARGIN, SLIPPAGE_RATE, SYMBOLS, TIMEFRAME, TREND_VETO_MARGIN,
+)
 from database import Database
 from features import FEATURE_COLS, latest_features
+from health import compute_health
 import telegram_notifier as tg
 
 MODEL_PATH = Path(__file__).resolve().parent / "model.bin"
-
-SYMBOLS = ["BTC/USDT", "ETH/USDT"]
-TIMEFRAME = "1m"
-# Kararlılık paketi (2026-07-03): hedef günlük %1-2 istikrarlı getiri, düşük varyans
-LEVERAGE = 5               # 10x → 5x: gap/likidasyon riski yarıya
-RISK_PER_TRADE = 0.005     # SL vurursa kasanın maks %0.5'i gider — backtest ile AYNI
-MAX_POSITIONS = 2
-FEE_RATE = 0.0004
-SLIPPAGE_RATE = 0.0002     # backtest ile aynı market-order slippage varsayımı
-LOOP_INTERVAL = 30         # saniye (canlı veri çekme aralığı)
-DEMO_START_BALANCE = 100.0 # demo kasa başlangıç bakiyesi
-CANDLE_BUFFER_SIZE = 3000  # 1m mum buffer'ı (50 saat) — 1h MTF için yeterli warmup
-RETRAIN_DAYS = 45          # otomatik yeniden eğitim penceresi (tam veri rejim-bağımlı)
-RETRAIN_MIN_TRADES = 20    # otomatik retrain için asgari yeni kapanan işlem
-RETRAIN_MIN_GAP_S = 12 * 3600  # K-13 (B-2): retrainler arası asgari süre — volatil
-                               # dönemde 20 işlem hızla dolar, gürültüye eğitim engellenir
-SIGNAL_MARGIN = 0.07       # sinyal seçiciliği: proba eşiği bu kadar da aşmalı.
-                           # Kalibrasyon kanıtı (2026-07-03, val): SHORT proba>=0.55
-                           # dilimi WR %63.7, 0.45-0.50 dilimi %30 (başabaş %40).
-                           # 0.48 eşik + 0.07 = ~0.55 efektif taban → kârlı bölge.
-TREND_VETO_MARGIN = 0.15   # 1h trend aleyhteyken sinyal ancak eşiği bu kadar aşarsa geçer
 
 _stop_flag = False
 _model_updating = False        # retrain sırasında yeni pozisyon açmayı engeller
 _manual_close_requests: set   = set()   # manuel kapatılacak semboller
 broadcast: Callable[[Dict[str, Any]], None] = lambda ev: None
 
-# Günlük frenler (yüzde bazlı, gün başı bakiyeye göre; her UTC gününde sıfırlanır)
-DAILY_LOSS_LIMIT_PCT  = -0.015   # gün içi -%1.5 → o gün yeni işlem yok (kayıp freni)
-DAILY_PROFIT_LOCK_PCT =  0.02    # gün içi +%2  → o gün yeni işlem yok (kâr kilidi)
+# Günlük fren yüzdeleri config.py'de: DAILY_LOSS_LIMIT_PCT / DAILY_PROFIT_LOCK_PCT
 
 
 def request_close(symbol: str) -> None:
@@ -204,17 +188,6 @@ def _compute_features(df: pd.DataFrame, d1_df: Optional[pd.DataFrame] = None) ->
     except Exception as e:
         broadcast({"phase": "error", "msg": f"Özellik hesaplama hatası: {e}"})
         return None
-
-
-def _predict(model_payload: Dict, features: Dict[str, float]) -> tuple:
-    """Geriye dönük uyumluluk — tek yönlü eski modeller için."""
-    model     = model_payload["model"]
-    cols      = model_payload.get("feature_cols", FEATURE_COLS)
-    threshold = float(model_payload.get("threshold", 0.5))
-    X         = pd.DataFrame([[features.get(c, 0.0) for c in cols]], columns=cols)
-    proba     = float(model.predict_proba(X)[0][1])
-    pred      = 1 if proba >= threshold else 0
-    return pred, proba
 
 
 def _predict_bidir(model_payload: Dict, features: Dict[str, float],
@@ -474,6 +447,8 @@ async def _run_async(testnet: bool) -> None:
     _last_candles: Dict[str, Dict] = {}              # sym → {price, high, low}
     _candle_buffer: Dict[str, Deque] = {}            # sym → kapanmış mumlar (maxlen=200)
     _last_error_ts: Dict[str, float] = {}            # Telegram hata spam önleme
+    _feed_ts = {"t": 0.0}                            # son başarılı fiyat güncellemesi (sağlık için)
+    _health_last = {"t": 0.0}                        # son sağlık yayını
 
     async def _ticker():
         """
@@ -517,6 +492,7 @@ async def _run_async(testnet: bool) -> None:
                                 raw_sym = k["s"]   # BTCUSDT
                                 sym = _raw_to_sym.get(raw_sym)
                                 if sym:
+                                    _feed_ts["t"] = time.time()
                                     _last_prices[sym]   = float(k["c"])
                                     _last_candles[sym]  = {
                                         "price": float(k["c"]),
@@ -564,6 +540,7 @@ async def _run_async(testnet: bool) -> None:
                         if not rows:
                             continue
                         open_k = rows[-1]   # son satır = henüz kapanmamış cari mum
+                        _feed_ts["t"] = time.time()
                         _last_prices[sym]  = float(open_k[4])
                         _last_candles[sym] = {
                             "price": float(open_k[4]),
@@ -632,6 +609,27 @@ async def _run_async(testnet: bool) -> None:
 
                 _broadcast_wallet()
                 _broadcast_positions()
+
+                # ── Sağlık skoru yayını (15 sn'de bir — K-18 / FAZ 2) ────────
+                if time.time() - _health_last["t"] >= 15:
+                    _health_last["t"] = time.time()
+                    try:
+                        _cost = FEE_RATE * 2 + SLIPPAGE_RATE
+                        _be = (sl_pct + _cost) / ((tp_pct - _cost) + (sl_pct + _cost))
+                        broadcast({"phase": "health", **compute_health(
+                            balance=demo_balance,
+                            peak_balance=peak_balance,
+                            day_start_balance=day_start_balance,
+                            realized_pnl_today=realized_pnl,
+                            trades=demo_trades,
+                            breakeven_wr=_be,
+                            last_feed_ts=_feed_ts["t"],
+                            daily_paused=daily_paused,
+                            open_positions=len(demo_positions),
+                        )})
+                    except Exception:
+                        pass
+
                 await asyncio.sleep(1)
         finally:
             price_task.cancel()

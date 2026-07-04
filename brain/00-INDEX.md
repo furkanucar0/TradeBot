@@ -29,7 +29,8 @@ Bu kasa, futures scalping botunun **kalıcı hafızası**: mimari, strateji mant
 - [[Kararlar-Kaydı]] — alınan/reddedilen/bekleyen tüm kararlar ve dayanakları
 
 ### 🗺 Planlar
-- [[2026-07-04-Kâr-Marjı-Raporu]] — ödül mantığı analizi + yükseltme hamleleri (karar bekliyor)
+- [[2026-07-04-Kâr-Marjı-Raporu]] — ödül mantığı analizi + yükseltme hamleleri (faz-1 uygulandı)
+- [[2026-07-04-CTOS-Yol-Haritası]] — 7 fazlı CTOS planının röntgeni + uyarlanmış faz planı (karar bekliyor)
 
 ### ⚠️ Kısıtlar
 - [[Ağ-ve-Ortam-Kısıtları]] — WebSocket engeli, Task Scheduler tuzakları

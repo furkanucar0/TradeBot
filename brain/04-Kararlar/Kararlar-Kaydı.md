@@ -25,6 +25,9 @@ Her kararın dayanağıyla birlikte kaydı. Format: **K-# · karar · durum · d
 - **K-15 · Threshold seçimi val-EV ile (H-2)** · ✅ 04.07 · F1 yerine doğrulamada beklenen toplam net PnL maksimize edilir; precision tabanı kısıt olarak durur. "Ödül mantığı v1"in ikinci yarısı.
 - **K-16 · Günlük Telegram raporu (H-4)** · ✅ 04.07 · UTC gün dönümünde dünün işlem/WR/PnL/kasa özeti otomatik gönderilir.
 
+- **K-17 · CTOS FAZ 1: config.py** · ✅ 04.07 · Tüm sabitler tek dosyada; live_trader/train_engine'deki MÜKERRER LEVERAGE/RISK/FEE tanımları kaldırıldı. Ölü kod temizliği: `_predict` (çağrılmıyordu), `POSITION_USDT`, `CANDLE_INTERVAL_MINUTES`, `PositionsPanel.tsx` (import edilmiyordu).
+- **K-18 · CTOS FAZ 2: health.py** · ✅ 04.07 · 0-100 Sağlık Skoru: DD(30) + ardışık SL(20) + günlük PnL(15) + WR trendi(20) + veri tazeliği(15). 15 sn'de bir "health" eventi → dashboard şeridi + GET /health + Telegram /health. Skor SADECE gözlem — karar mantığına karışmaz (o iş FAZ 3 RiskGate'in).
+
 ## Reddedilenler
 
 - **R-1 · Sabit 0.65 olasılık eşiği** · ❌ · Olasılık ölçeği her eğitimde kayar; göreli taban doğru (K-9 zaten ~0.55 sağlıyor).

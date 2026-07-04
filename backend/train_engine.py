@@ -49,45 +49,16 @@ try:
 except Exception:
     FASTAPI_AVAILABLE = False
 
+from config import (
+    FEE_RATE, FUNDING_PER_8H, LEVERAGE, MAX_POSITIONS, MAX_RR,
+    MIN_DIRECTION_PREC, PURGE_HOURS, RISK_PER_TRADE, RR_TARGET,
+    SL_GRID, SLIPPAGE_RATE, TEST_DAYS, TP_GRID, VAL_DAYS, WIN_RATE_TARGET,
+)
 from database import get_database_path
 from features import FEATURE_COLS, add_features
 
-# ── Sabitler ──────────────────────────────────────────────────────────────────
-# Kararlılık paketi (2026-07-03): hedef günlük %1-2 istikrarlı getiri.
-# Yüksek R:R "seyrek büyük kazanç" modu yerine sık-küçük-kazanç profili.
-LEVERAGE = 5                  # 10x → 5x: gap/likidasyon riski yarıya
-POSITION_USDT = 50.0          # teminat başına (eski canlı yol — artık kullanılmıyor)
-MAX_POSITIONS = 2
-FEE_RATE = 0.0004             # %0.04 taker (giriş + çıkış = %0.08 toplam)
-SLIPPAGE_RATE = 0.0002        # %0.02 market order slippage (giriş + çıkış)
-FUNDING_PER_8H = 0.0001       # tahmini %0.01 / 8 saat
-CANDLE_INTERVAL_MINUTES = 1   # 1m mumlar
-
-WIN_RATE_TARGET = 0.60
-RR_TARGET = 2.0          # min R:R — altında breakeven WR model WR'ı geçer
-# MAX_RR deneyi (2026-07-03): 2.5'e kısıtlamak denendi ve GERİ ALINDI.
-# Ampirik sonuç: R:R 2.0 kombolarında model WR'ı (%40-41) maliyet dahil
-# başabaşı (%42.2) TUTMUYOR (iki bağımsız eğitimde negatif). R:R 4.0'da ise
-# kenar var (WR %31 > başabaş %25.3, iki eğitimde pozitif). Kararlılık,
-# R:R'ı kısıtlamakla değil %0.5 risk + günlük frenlerle sağlanıyor.
-MAX_RR = 4.0
-RISK_PER_TRADE = 0.005   # sermayenin %0.5'i risk/işlem — canlı ile AYNI formül
-
-# Zaman bazlı bölme: train | val (threshold seçimi) | test (dokunulmamış rapor)
-# Test verisi eğitimde, early stopping'de veya threshold seçiminde KULLANILMAZ.
-VAL_DAYS  = 21
-TEST_DAYS = 21
-PURGE_HOURS = 24   # bölme sınırlarında etiket sızıntısını önlemek için boşluk
-
-# Dar SL/TP: günlük %1 hedefi için yüksek trade frekansı gerekli.
-# Geniş SL/TP (0.8%/3.0%) → pozisyon saatlerce açık kalır → MAX_POSITIONS=2 bloklar → az trade.
-# Dar SL/TP (0.3-0.5%/0.6-1.2%) → 5-30 dk kapanır → daha fazla trade/gün.
-# Breakeven WR: SL=0.5%/TP=1.0% → 38.7%; SL=0.3%/TP=0.6% → 38.7% (aynı formül).
-SL_GRID = [0.003, 0.004, 0.005]
-TP_GRID = [0.006, 0.008, 0.010, 0.012]
-
-# Yönün minimum precision eşiği — altında sinyaller devre dışı bırakılır
-MIN_DIRECTION_PREC = 0.35
+# Tüm ayarlanabilir sabitler config.py'de (K-17). Karar dayanakları:
+# brain/04-Kararlar/Kararlar-Kaydı.md (MAX_RR geri alma hikâyesi: K-7)
 
 REPORTS_DIR = Path(__file__).resolve().parent / "reports"
 
