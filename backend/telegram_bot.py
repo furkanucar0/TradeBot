@@ -316,6 +316,32 @@ def cmd_stop_all() -> str:
     )
 
 
+def cmd_panic() -> str:
+    """K-19 kill switch: pozisyonları kapat + botu durdur + kilit koy."""
+    if not _api_ready():
+        return "❌ Backend çalışmıyor — panik kilidi konulamadı. Backend kapalıysa açık paper pozisyonu da yoktur."
+    r = _api("post", "/panic")
+    if "error" in r:
+        return f"❌ Panik başarısız: {r['error']}"
+    return (
+        "🚨 <b>PANİK KİLİDİ DEVREDE</b>\n"
+        "Açık pozisyonlar kapatılıyor, bot durduruluyor.\n"
+        "Kilit kalkana kadar bot başlatılamaz.\n"
+        "Kaldırmak için: /panik_kaldir"
+    )
+
+
+def cmd_panic_clear() -> str:
+    if not _api_ready():
+        return "❌ Backend çalışmıyor."
+    r = _api("post", "/panic/clear")
+    if "error" in r:
+        return f"❌ Kilit kaldırılamadı: {r['error']}"
+    if r.get("status") == "not_active":
+        return "⚠️ Panik kilidi zaten yok."
+    return "✅ <b>Panik kilidi kaldırıldı.</b>\nBot otomatik başlamaz — hazır olunca /paper yaz."
+
+
 def cmd_health() -> str:
     if not _api_ready():
         return "⚠️ Backend çalışmıyor."
@@ -356,6 +382,8 @@ def cmd_status() -> str:
     bot_status = "▶️ Çalışıyor" if st.get("is_running") else "⏹ Durmuş"
     if st.get("is_training"):
         bot_status += " | 🧠 Eğitim var"
+    if st.get("panic"):
+        lines.append("\n🚨 <b>PANİK KİLİDİ AKTİF</b> — /panik_kaldir ile kaldır")
 
     wr = f"{st['last_win_rate']*100:.1f}%" if st.get("last_win_rate") else "—"
     rr = f"{st['last_rr']:.2f}"            if st.get("last_rr")       else "—"
@@ -418,7 +446,9 @@ _HELP = (
     "<b>── Durdurma ──</b>\n"
     "/durdur       — Her şeyi durdur\n"
     "/durdur_bot   — Sadece paper trade botunu durdur\n"
-    "/durdur_front — Sadece frontend'i durdur\n\n"
+    "/durdur_front — Sadece frontend'i durdur\n"
+    "/panik        — 🚨 ACİL: pozisyonları kapat + kilitle\n"
+    "/panik_kaldir — Panik kilidini kaldır\n\n"
     "<b>── Bilgi ──</b>\n"
     "/status       — Anlık durum\n"
     "/health       — Sağlık skoru (0-100)\n"
@@ -471,6 +501,12 @@ def _handle(text: str):
 
     elif cmd == "/health":
         _send(cmd_health())
+
+    elif cmd == "/panik":
+        _send(cmd_panic())
+
+    elif cmd == "/panik_kaldir":
+        _send(cmd_panic_clear())
 
     else:
         _send(f"❓ Bilinmeyen komut: <code>{cmd}</code>\n/help yaz.")

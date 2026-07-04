@@ -17,6 +17,7 @@ tags: [mimari]
 | Özellikler | `backend/features.py` | **TEK özellik kaynağı** — eğitim ve canlı aynı kodu kullanır | — |
 | Konfig | `backend/config.py` | **TEK ayar kaynağı** (K-17) — tüm sabitler; mükerrer tanım yasak | — |
 | Sağlık | `backend/health.py` | 0-100 Health Score (K-18) — 15 sn'de bir yayın, /health, Telegram /health | — |
+| Risk Duvarı | `backend/risk_gate.py` | TEK veto noktası (K-19): tüm işlem-öncesi kontroller + panik kilidi (panic.lock) + sağlık duraklatması (<40 dur / ≥55 devam) | — |
 | Veritabanı | `backend/bot.sqlite` | 3 tablo: historical_market_data, trades, model_runs | — |
 
 ## Veri Akışı

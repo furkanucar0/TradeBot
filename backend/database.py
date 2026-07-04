@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -60,6 +61,18 @@ CREATE TABLE IF NOT EXISTS trades (
     pnl_usdt REAL,
     status TEXT NOT NULL DEFAULT 'open',
     paper INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS decisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    direction TEXT,
+    proba REAL,
+    threshold REAL,
+    blocked_by TEXT,
+    opened INTEGER DEFAULT 0,
+    detail TEXT
 );
 
 CREATE TABLE IF NOT EXISTS model_runs (
@@ -196,6 +209,46 @@ class Database:
         )
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
+
+    async def insert_decision(self, d: Dict[str, Any]) -> int:
+        """FAZ 4 (K-20): sinyal kararını yapılandırılmış gerekçeyle kaydet."""
+        assert self.conn is not None
+        cursor = await self.conn.execute(
+            """INSERT INTO decisions (ts, symbol, direction, proba, threshold, blocked_by, opened, detail)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                d["ts"],
+                d["symbol"],
+                d.get("direction"),
+                d.get("proba"),
+                d.get("threshold"),
+                d.get("blocked_by"),
+                1 if d.get("opened") else 0,
+                d.get("detail"),
+            ),
+        )
+        await self.conn.commit()
+        return cursor.lastrowid
+
+    async def fetch_decisions(self, limit: int = 50, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        assert self.conn is not None
+        if symbol:
+            cursor = await self.conn.execute(
+                "SELECT * FROM decisions WHERE symbol=? ORDER BY ts DESC LIMIT ?",
+                (symbol, limit),
+            )
+        else:
+            cursor = await self.conn.execute(
+                "SELECT * FROM decisions ORDER BY ts DESC LIMIT ?", (limit,)
+            )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
+
+    async def prune_decisions(self, keep_days: int = 7) -> None:
+        assert self.conn is not None
+        cutoff = int((time.time() - keep_days * 86400) * 1000)
+        await self.conn.execute("DELETE FROM decisions WHERE ts < ?", (cutoff,))
+        await self.conn.commit()
 
     async def insert_model_run(self, run: Dict[str, Any]) -> int:
         assert self.conn is not None

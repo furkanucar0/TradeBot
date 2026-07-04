@@ -8,6 +8,7 @@ export interface BotStatus {
   is_running: boolean
   is_training: boolean
   ready_for_live: boolean
+  panic?: boolean
   model_exists: boolean
   open_positions: number
   last_win_rate: number | null
@@ -64,3 +65,5 @@ export const fetchBacktest = () => api.get<BacktestSummary>('/backtest').then(r 
 export const triggerTrain = () => api.post('/train').then(r => r.data)
 export const startBot = (testnet = true) => api.post(`/bot/start?testnet=${testnet}`).then(r => r.data)
 export const stopBot = () => api.post('/bot/stop').then(r => r.data)
+export const panicBot = () => api.post('/panic').then(r => r.data)
+export const clearPanic = () => api.post('/panic/clear').then(r => r.data)

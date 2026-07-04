@@ -158,10 +158,12 @@ async def get_status():
         )
     _bot_state["ready_for_live"] = ready
 
+    import risk_gate
     return {
         "is_running": _bot_state["is_running"],
         "is_training": _bot_state["is_training"],
         "ready_for_live": ready,
+        "panic": risk_gate.panic_active(),
         "model_exists": MODEL_PATH.exists(),
         "open_positions": len(open_trades),
         "last_win_rate": summary.get("win_rate"),
@@ -259,6 +261,61 @@ async def get_health():
     return h
 
 
+# ── Panik / Kill Switch (K-19 / FAZ 3) ────────────────────────────────────────
+@app.post("/panic")
+async def panic():
+    """Acil durdurma: kilit dosyası yazılır, açık pozisyonlar kapatılır, bot
+    durur. Kilit kalkana kadar (/panic/clear) bot yeniden BAŞLATILAMAZ."""
+    import risk_gate
+    import telegram_notifier as tg
+    already = risk_gate.panic_active()
+    risk_gate.panic_engage("manual")
+    if _bot_state["is_running"]:
+        import live_trader
+        live_trader.panic_close_all()
+    _push_event({"phase": "server",
+                 "msg": "🚨 PANİK KİLİDİ DEVREDE — pozisyonlar kapatılıyor, bot durduruluyor. "
+                        "Kaldırmak için: /panik_kaldir (Telegram) veya POST /panic/clear"})
+    if not already:
+        tg.send_async(
+            "🚨 <b>PANİK KİLİDİ DEVREDE</b>\n"
+            "Tüm pozisyonlar kapatılıyor, bot durduruluyor.\n"
+            "Kilit kalkana kadar bot başlatılamaz.\n"
+            "Kaldırmak için: /panik_kaldir"
+        )
+    return {"status": "panic_engaged", "was_running": _bot_state["is_running"]}
+
+
+@app.post("/panic/clear")
+async def panic_clear():
+    """Panik kilidini elle kaldır (bot otomatik başlamaz; /paper gerekir)."""
+    import risk_gate
+    if not risk_gate.panic_active():
+        return {"status": "not_active"}
+    risk_gate.panic_clear()
+    _push_event({"phase": "server", "msg": "✅ Panik kilidi kaldırıldı — bot elle başlatılabilir"})
+    return {"status": "cleared"}
+
+
+# ── Karar Geçmişi (K-20 / FAZ 4) ─────────────────────────────────────────────
+@app.get("/decisions")
+async def get_decisions(limit: int = 50, symbol: str = ""):
+    """Son sinyal kararları (gerekçe kodlarıyla). NO_SIGNAL kayıtları tutulmaz."""
+    db = Database()
+    await db.connect()
+    try:
+        rows = await db.fetch_decisions(limit=limit, symbol=symbol or None)
+    finally:
+        await db.close()
+    for r in rows:
+        if r.get("detail"):
+            try:
+                r["detail"] = json.loads(r["detail"])
+            except Exception:
+                pass
+    return rows
+
+
 # ── Backtest Results ──────────────────────────────────────────────────────────
 @app.get("/backtest")
 async def get_backtest():
@@ -344,6 +401,13 @@ async def close_position(symbol: str):
 # ── Bot Start/Stop ────────────────────────────────────────────────────────────
 @app.post("/bot/start")
 async def bot_start(background_tasks: BackgroundTasks, testnet: bool = True):
+    import risk_gate
+    if risk_gate.panic_active():
+        raise HTTPException(
+            423,
+            "Panik kilidi aktif — bot başlatılamaz. Önce kilidi kaldırın: "
+            "/panik_kaldir (Telegram) veya POST /panic/clear",
+        )
     if _bot_state["is_running"]:
         raise HTTPException(400, "Bot zaten çalışıyor")
     if not _bot_state["ready_for_live"] and not testnet:

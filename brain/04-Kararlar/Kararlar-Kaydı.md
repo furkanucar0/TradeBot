@@ -27,6 +27,8 @@ Her kararın dayanağıyla birlikte kaydı. Format: **K-# · karar · durum · d
 
 - **K-17 · CTOS FAZ 1: config.py** · ✅ 04.07 · Tüm sabitler tek dosyada; live_trader/train_engine'deki MÜKERRER LEVERAGE/RISK/FEE tanımları kaldırıldı. Ölü kod temizliği: `_predict` (çağrılmıyordu), `POSITION_USDT`, `CANDLE_INTERVAL_MINUTES`, `PositionsPanel.tsx` (import edilmiyordu).
 - **K-18 · CTOS FAZ 2: health.py** · ✅ 04.07 · 0-100 Sağlık Skoru: DD(30) + ardışık SL(20) + günlük PnL(15) + WR trendi(20) + veri tazeliği(15). 15 sn'de bir "health" eventi → dashboard şeridi + GET /health + Telegram /health. Skor SADECE gözlem — karar mantığına karışmaz (o iş FAZ 3 RiskGate'in).
+- **K-19 · CTOS FAZ 3: risk_gate.py** · ✅ 04.07 · Tüm işlem-öncesi vetolar (ADX ranging, güven ölçekli trend vetosu, emir defteri, çift-yön çözümü, kapasite) TEK RiskGate sınıfında — davranış birebir korundu (10 birim senaryo ile doğrulandı). YENİ: (a) panik kill switch — `panic.lock` dosya tabanlı, restart'a dayanır, /panik pozisyonları kapatır + botu durdurur + /bot/start 423 döner, elle /panik_kaldir şart; (b) sağlık duraklatması — skor <40 → yeni işlem durur, ≥55'te devam (histerezis; veri kesintisi skoru düşürdüğü için besleme ölünce otomatik duraklama bedavaya gelir).
+- **K-20 · CTOS FAZ 4: Reason Codes** · ✅ 04.07 · Her sinyal kararı yapılandırılmış gerekçeyle: "decision" eventi (dashboard Karar Paneli) + `decisions` tablosu (NO_SIGNAL kalabalığı DB'ye yazılmaz; gerçek bloklar/açılışlar 7 gün tutulur, GET /decisions). Kodlar: NO_SIGNAL, ADX_RANGING, TREND_VETO, OB_IMBALANCE, MAX_POSITIONS, PANIC, DAILY_BRAKE, HEALTH_PAUSE, MODEL_UPDATING, BUFFER_SHORT, NO_PRICE, NO_FEATURES. Artık "neden işlem yok" sorusu VERİ ile cevaplanır.
 
 ## Reddedilenler
 

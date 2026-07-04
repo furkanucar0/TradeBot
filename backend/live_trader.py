@@ -20,13 +20,14 @@ import requests as _req
 
 from config import (
     CANDLE_BUFFER_SIZE, DAILY_LOSS_LIMIT_PCT, DAILY_PROFIT_LOCK_PCT,
-    DEMO_START_BALANCE, FEE_RATE, LEVERAGE, LOOP_INTERVAL, MAX_POSITIONS,
-    RETRAIN_DAYS, RETRAIN_MIN_GAP_S, RETRAIN_MIN_TRADES, RISK_PER_TRADE,
-    SIGNAL_MARGIN, SLIPPAGE_RATE, SYMBOLS, TIMEFRAME, TREND_VETO_MARGIN,
+    DECISIONS_KEEP_DAYS, DEMO_START_BALANCE, FEE_RATE, LEVERAGE, LOOP_INTERVAL,
+    MAX_POSITIONS, RETRAIN_DAYS, RETRAIN_MIN_GAP_S, RETRAIN_MIN_TRADES,
+    RISK_PER_TRADE, SIGNAL_MARGIN, SLIPPAGE_RATE, SYMBOLS, TIMEFRAME,
 )
 from database import Database
 from features import FEATURE_COLS, latest_features
 from health import compute_health
+from risk_gate import RiskGate, panic_active
 import telegram_notifier as tg
 
 MODEL_PATH = Path(__file__).resolve().parent / "model.bin"
@@ -47,6 +48,16 @@ def request_close(symbol: str) -> None:
 def stop() -> None:
     global _stop_flag
     _stop_flag = True
+
+
+_panic_close_requested = False   # /panik: tüm pozisyonları kapat + botu durdur
+
+
+def panic_close_all() -> None:
+    """FAZ 3 (K-19) kill switch: açık pozisyonlar market'ten kapatılır,
+    ardından bot durur. Kilit dosyası (panic.lock) api tarafında yazılır."""
+    global _panic_close_requested
+    _panic_close_requested = True
 
 
 _fng_cache: Dict[str, Any] = {"value": 50, "ts": 0.0}   # Fear & Greed cache (1 saat)
@@ -376,6 +387,13 @@ async def _run_async(testnet: bool) -> None:
     db         = Database()
     await db.connect()
 
+    # FAZ 3 (K-19): tek veto noktası + FAZ 4 (K-20): eski karar kayıtlarını buda
+    gate = RiskGate()
+    try:
+        await db.prune_decisions(DECISIONS_KEEP_DAYS)
+    except Exception:
+        pass
+
     if not paper_mode:
         for sym in SYMBOLS:
             _set_leverage(exchange, sym)
@@ -573,6 +591,18 @@ async def _run_async(testnet: bool) -> None:
         try:
             # ── 1 saniyelik döngü: manuel kapat + wallet/position broadcast ──
             while not _stop_flag:
+                # ── Panik (K-19): önce tüm pozisyonları kapat, sonra dur ─────
+                global _panic_close_requested
+                if _panic_close_requested:
+                    if demo_positions:
+                        for _ps in list(demo_positions.keys()):
+                            _manual_close_requests.add(_ps)
+                    elif not _manual_close_requests:
+                        _panic_close_requested = False
+                        broadcast({"phase": "server",
+                                   "msg": "🚨 Panik: tüm pozisyonlar kapatıldı — bot durduruluyor"})
+                        stop()
+
                 for sym in list(_manual_close_requests):
                     _manual_close_requests.discard(sym)
                     if sym not in demo_positions:
@@ -616,7 +646,7 @@ async def _run_async(testnet: bool) -> None:
                     try:
                         _cost = FEE_RATE * 2 + SLIPPAGE_RATE
                         _be = (sl_pct + _cost) / ((tp_pct - _cost) + (sl_pct + _cost))
-                        broadcast({"phase": "health", **compute_health(
+                        _h = compute_health(
                             balance=demo_balance,
                             peak_balance=peak_balance,
                             day_start_balance=day_start_balance,
@@ -626,7 +656,27 @@ async def _run_async(testnet: bool) -> None:
                             last_feed_ts=_feed_ts["t"],
                             daily_paused=daily_paused,
                             open_positions=len(demo_positions),
-                        )})
+                        )
+                        # K-19: sağlık skoru RiskGate'i besler (histerezisli duraklatma)
+                        _hchange = gate.update_health(_h["score"])
+                        broadcast({"phase": "health", **_h,
+                                   "health_paused": gate.health_paused,
+                                   "panic": panic_active()})
+                        if _hchange == "paused":
+                            broadcast({"phase": "server",
+                                       "msg": f"⚠️ Sağlık skoru {_h['score']} — yeni işlem DURAKLATILDI (eşik altı)"})
+                            tg.send_async(
+                                f"⚠️ <b>Sağlık Duraklatması</b>\n"
+                                f"Skor: {_h['score']}/100 ({_h['status']})\n"
+                                f"Skor toparlanana kadar yeni işlem açılmayacak."
+                            )
+                        elif _hchange == "resumed":
+                            broadcast({"phase": "server",
+                                       "msg": f"✅ Sağlık skoru {_h['score']} — işlem açma yeniden aktif"})
+                            tg.send_async(
+                                f"✅ <b>Sağlık Toparlandı</b>\n"
+                                f"Skor: {_h['score']}/100 — işlemler devam ediyor."
+                            )
                     except Exception:
                         pass
 
@@ -696,6 +746,31 @@ async def _run_async(testnet: bool) -> None:
                     _d1_buffer[sym] = None
                     broadcast({"phase": "server",
                                "msg": f"{sym} günlük veri alınamadı — 1d özellikler devre dışı"})
+
+    async def _emit_decision(sym: str, *, blocked_by: Optional[str] = None,
+                             direction: Optional[str] = None,
+                             proba: Optional[float] = None,
+                             threshold: Optional[float] = None,
+                             opened: bool = False,
+                             detail: Optional[Dict[str, Any]] = None,
+                             persist: bool = True) -> None:
+        """FAZ 4 (K-20): karar eventi — dashboard paneli + decisions tablosu.
+        NO_SIGNAL kalabalığı DB'ye yazılmaz (panel canlı event'ten görür);
+        gerçek bloklar ve açılışlar kalıcıdır."""
+        broadcast({"phase": "decision", "symbol": sym, "blocked_by": blocked_by,
+                   "direction": direction, "proba": proba, "threshold": threshold,
+                   "opened": opened, "detail": detail or {}})
+        if persist and blocked_by != "NO_SIGNAL":
+            try:
+                await db.insert_decision({
+                    "ts": int(time.time() * 1000), "symbol": sym,
+                    "direction": direction, "proba": proba,
+                    "threshold": threshold, "blocked_by": blocked_by,
+                    "opened": opened,
+                    "detail": json.dumps(detail or {}, ensure_ascii=False),
+                })
+            except Exception:
+                pass
 
     ticker_task = asyncio.create_task(_ticker())
     loss_day = time.strftime("%Y-%m-%d", time.gmtime())   # günlük kayıp limiti UTC gün bazlı
@@ -888,8 +963,9 @@ async def _run_async(testnet: bool) -> None:
 
             open_syms = list(demo_positions.keys()) if paper_mode else []
 
-            # ── Retrain veya günlük fren sırasında yeni pozisyon açma ────────
-            if _model_updating or daily_paused:
+            # ── Döngü seviyesi bloklar (K-19): panik / retrain / günlük fren /
+            #    sağlık duraklatması — tek noktadan
+            if gate.global_block(_model_updating, daily_paused):
                 await asyncio.sleep(LOOP_INTERVAL)
                 continue
 
@@ -905,6 +981,7 @@ async def _run_async(testnet: bool) -> None:
                     if len(buf) < 30:
                         broadcast({"phase": "server",
                                    "msg": f"{sym} buffer dolmadı ({len(buf)}/30), bekleniyor"})
+                        await _emit_decision(sym, blocked_by="BUFFER_SHORT", persist=False)
                         continue
                     df = pd.DataFrame(buf)
                     features = _compute_features(df, _d1_buffer.get(sym))
@@ -912,11 +989,13 @@ async def _run_async(testnet: bool) -> None:
                     if entry_price is None:
                         broadcast({"phase": "server",
                                    "msg": f"{sym} anlık fiyat henüz yok (WS tick bekleniyor) — atlandı"})
+                        await _emit_decision(sym, blocked_by="NO_PRICE", persist=False)
                         continue
 
                     if features is None:
                         broadcast({"phase": "server",
                                    "msg": f"{sym} özellikler hesaplanamadı (NaN/eksik veri) — atlandı"})
+                        await _emit_decision(sym, blocked_by="NO_FEATURES", persist=False)
                         continue
 
                     # ── Volatility-Adjusted Threshold ────────────────────────
@@ -931,91 +1010,66 @@ async def _run_async(testnet: bool) -> None:
                     pred_long, proba_long, pred_short, proba_short = \
                         _predict_bidir(model_payload, features, thr_adj)
 
-                    # ── Hard MTF Filtreleri ───────────────────────────────────
-                    h1_adx_val   = features.get("h1_adx", 25.0)
-                    h1_ema_cross = features.get("h1_ema_cross", 0.0)
-                    if h1_adx_val < 20:            # ranging piyasa — tüm sinyalleri durdur
-                        broadcast({"phase": "server",
-                                   "msg": f"{sym} 1h ADX={h1_adx_val:.1f} < 20 (ranging) — sinyal atlandı"})
-                        continue
-                    # Trend vetosu GÜVEN ÖLÇEKLİ: sıradan karşı-trend sinyaller
-                    # elenir; eşiği TREND_VETO_MARGIN kadar aşan güçlü sinyaller
-                    # geçer (mutlak veto, SHORT-ağırlıklı model + yukarı trendde
-                    # botu günlerce kilitliyordu)
+                    # ── Risk Duvarı (FAZ 3 — K-19): ADX + trend vetosu + emir
+                    #    defteri + çift-yön çözümü + kapasite TEK noktada
+                    ob_imbalance = await asyncio.to_thread(_fetch_order_book_imbalance, sym)
                     thr_l_eff = float(model_payload.get("threshold_long", 0.5)) + thr_adj
                     thr_s_eff = float(model_payload.get("threshold_short", 0.5)) + thr_adj
-                    if pred_long == 1 and h1_ema_cross < 0:    # LONG ama 1h trendi aşağı
-                        if proba_long >= thr_l_eff + TREND_VETO_MARGIN:
-                            broadcast({"phase": "server",
-                                       "msg": f"{sym} LONG karşı-trend ama sinyal çok güçlü (p={proba_long:.2f}) — veto delindi"})
-                        else:
-                            broadcast({"phase": "server",
-                                       "msg": f"{sym} LONG sinyali var ancak 1h trendi bearish — atlandı"})
-                            pred_long = 0
-                    if pred_short == 1 and h1_ema_cross > 0:   # SHORT ama 1h trendi yukarı
-                        if proba_short >= thr_s_eff + TREND_VETO_MARGIN:
-                            broadcast({"phase": "server",
-                                       "msg": f"{sym} SHORT karşı-trend ama sinyal çok güçlü (p={proba_short:.2f}) — veto delindi"})
-                        else:
-                            broadcast({"phase": "server",
-                                       "msg": f"{sym} SHORT sinyali var ancak 1h trendi bullish — atlandı"})
-                            pred_short = 0
+                    dec = gate.evaluate(
+                        sym=sym, features=features,
+                        pred_long=pred_long, proba_long=proba_long,
+                        pred_short=pred_short, proba_short=proba_short,
+                        thr_long_eff=thr_l_eff, thr_short_eff=thr_s_eff,
+                        ob_imbalance=ob_imbalance,
+                        open_count=len(open_syms), max_positions=MAX_POSITIONS,
+                    )
+                    for _m in dec["logs"]:
+                        broadcast({"phase": "server", "msg": _m})
 
-                    # ── Order Book filtresi ───────────────────────────────────
-                    ob_imbalance = await asyncio.to_thread(_fetch_order_book_imbalance, sym)
-                    ob_blocked = False
-                    if pred_long == 1 and ob_imbalance < -0.15:   # bids zayıf → LONG iyi değil
-                        pred_long = 0; ob_blocked = True
-                    if pred_short == 1 and ob_imbalance > 0.15:   # asks zayıf → SHORT iyi değil
-                        pred_short = 0; ob_blocked = True
+                    if dec["emit_signal"]:
+                        any_signal = dec["pred_long"] or dec["pred_short"]
+                        sig_proba  = dec["proba"] if dec["direction"] else max(proba_long, proba_short)
+                        broadcast({
+                            "phase": "signal",
+                            "symbol": sym,
+                            "pred":   1 if any_signal else 0,
+                            "proba":  round(sig_proba, 4),
+                            "price":  round(entry_price, 2),
+                            "direction": dec["direction"] or "—",
+                            "ob_imbalance": round(ob_imbalance, 3),
+                            "fng":    fng,
+                            "thr_adj": round(thr_adj, 4),
+                            "proba_long":  round(proba_long, 4),
+                            "proba_short": round(proba_short, 4),
+                        })
 
-                    # ── Her iki yön aynı anda ateşlenirse güçlü olanı al ─────
-                    if pred_long == 1 and pred_short == 1:
-                        if proba_long >= proba_short:
-                            pred_short = 0
-                        else:
-                            pred_long = 0
-
-                    any_signal = pred_long or pred_short
-                    sig_dir    = "LONG" if pred_long else ("SHORT" if pred_short else "—")
-                    sig_proba  = proba_long if pred_long else proba_short
-
-                    broadcast({
-                        "phase": "signal",
-                        "symbol": sym,
-                        "pred":   1 if any_signal else 0,
-                        "proba":  round(sig_proba, 4),
-                        "price":  round(entry_price, 2),
-                        "direction": sig_dir,
-                        "ob_imbalance": round(ob_imbalance, 3),
-                        "fng":    fng,
-                        "thr_adj": round(thr_adj, 4),
-                        "proba_long":  round(proba_long, 4),
-                        "proba_short": round(proba_short, 4),
-                    })
-
-                    if ob_blocked:
-                        # Yalnızca GERÇEKTEN bloklanınca logla (eski hali OB lehte
-                        # olsa bile basılıyor, işlem açılırken "geçildi" diyordu)
+                    if dec["ob_blocked"]:
                         broadcast({"phase": "server",
                                    "msg": f"{sym} sinyal emir defteri tarafından bloklandı (OB={ob_imbalance:.2f})"})
 
-                    # ── LONG aç ───────────────────────────────────────────────
-                    if pred_long == 1 and sym not in open_syms and len(open_syms) < MAX_POSITIONS:
-                        is_long  = True
-                        proba    = proba_long
+                    # ── Karar kaydı (FAZ 4 — K-20) ───────────────────────────
+                    await _emit_decision(
+                        sym,
+                        blocked_by=dec["blocked_by"],
+                        direction=dec["direction"],
+                        proba=round(dec["proba"], 4) if dec["proba"] is not None else None,
+                        threshold=round(dec["threshold"], 4) if dec["threshold"] is not None else None,
+                        opened=dec["allowed"],
+                        detail=dec["detail"],
+                    )
+
+                    if not dec["allowed"]:
+                        continue
+
+                    chosen_dir = dec["direction"]
+                    is_long    = chosen_dir == "LONG"
+                    proba      = dec["proba"]
+                    if is_long:
                         tp_price = entry_price * (1 + tp_pct)
                         sl_price = entry_price * (1 - sl_pct)
-                        chosen_dir = "LONG"
-                    # ── SHORT aç ──────────────────────────────────────────────
-                    elif pred_short == 1 and sym not in open_syms and len(open_syms) < MAX_POSITIONS:
-                        is_long  = False
-                        proba    = proba_short
+                    else:
                         tp_price = entry_price * (1 - tp_pct)
                         sl_price = entry_price * (1 + sl_pct)
-                        chosen_dir = "SHORT"
-                    else:
-                        continue
 
                     if True:   # pozisyon açma bloğu (indentasyonu koru)
 

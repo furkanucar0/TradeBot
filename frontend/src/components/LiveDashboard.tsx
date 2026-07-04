@@ -4,7 +4,7 @@ import CandleChart from './CandleChart'
 import ModelMetrics from './ModelMetrics'
 import TradeHistory from './TradeHistory'
 import {
-  fetchBacktest, fetchStatus, startBot, stopBot, triggerTrain,
+  clearPanic, fetchBacktest, fetchStatus, panicBot, startBot, stopBot, triggerTrain,
   type BacktestSummary, type BotStatus,
 } from '../api'
 
@@ -37,6 +37,30 @@ interface HealthState {
   score: number; status: string;
   components: Record<string, HealthComponent>;
   balance?: number; open_positions?: number; daily_paused?: boolean;
+  health_paused?: boolean; panic?: boolean;
+}
+
+// FAZ 4 (K-20): sinyal kararı — gerekçe koduyla
+interface DecisionDetail {
+  proba_long?: number; proba_short?: number;
+  thr_long?: number; thr_short?: number;
+  ob?: number; adx?: number;
+}
+interface DecisionState {
+  symbol: string; blocked_by: string | null; direction: string | null;
+  proba: number | null; threshold: number | null; opened: boolean;
+  detail: DecisionDetail; ts: number;
+}
+
+const REASON_TR: Record<string, string> = {
+  NO_SIGNAL:     'Sinyal yok — eşik altı',
+  ADX_RANGING:   'ADX düşük — piyasa yönsüz',
+  TREND_VETO:    '1h trend aleyhte — veto',
+  OB_IMBALANCE:  'Emir defteri aleyhte',
+  MAX_POSITIONS: 'Maks. pozisyon dolu',
+  BUFFER_SHORT:  'Veri buffer doluyor',
+  NO_PRICE:      'Anlık fiyat bekleniyor',
+  NO_FEATURES:   'Özellik hesaplanamadı',
 }
 
 function logColor(l: LogLevel) {
@@ -64,6 +88,7 @@ export default function LiveDashboard() {
   const [chartSymbol, setChartSymbol] = useState<'BTC' | 'ETH'>('BTC')
   const [tradeMarkers, setTradeMarkers] = useState<Record<'BTC' | 'ETH', SeriesMarker<Time>[]>>({ BTC: [], ETH: [] })
   const [health, setHealth] = useState<HealthState | null>(null)
+  const [decisions, setDecisions] = useState<Record<string, DecisionState>>({})
   const logsRef = useRef<HTMLDivElement>(null)
 
   // Status polling
@@ -184,6 +209,16 @@ export default function LiveDashboard() {
         pushLog('info', `ANALİZ ${ev.symbol} — ${verdict} | ${probaStr} | ${wrStr} | Ort sinyal: ${(ev.avg_proba * 100).toFixed(1)}%`)
       } else if (phase === 'health') {
         setHealth(ev as unknown as HealthState)
+      } else if (phase === 'decision') {
+        setDecisions(prev => ({
+          ...prev,
+          [ev.symbol]: {
+            symbol: ev.symbol, blocked_by: ev.blocked_by ?? null,
+            direction: ev.direction ?? null, proba: ev.proba ?? null,
+            threshold: ev.threshold ?? null, opened: !!ev.opened,
+            detail: ev.detail ?? {}, ts: (ev.ts ?? Date.now() / 1000) * 1000,
+          },
+        }))
       } else if (phase === 'error') {
         pushLog('error', ev.msg || 'Hata')
       } else if (phase === 'server') {
@@ -247,6 +282,25 @@ export default function LiveDashboard() {
     }
   }
 
+  const handlePanic = async () => {
+    if (!window.confirm('🚨 PANİK: Tüm pozisyonlar kapatılacak, bot durdurulacak ve kilitlenecek. Emin misin?')) return
+    try {
+      await panicBot()
+      fetchStatus().then(setStatus).catch(() => null)
+    } catch (e: any) {
+      setLogs(prev => [{ ts: Date.now(), level: 'error', msg: e?.response?.data?.detail || e?.message }, ...prev])
+    }
+  }
+
+  const handleClearPanic = async () => {
+    try {
+      await clearPanic()
+      fetchStatus().then(setStatus).catch(() => null)
+    } catch (e: any) {
+      setLogs(prev => [{ ts: Date.now(), level: 'error', msg: e?.response?.data?.detail || e?.message }, ...prev])
+    }
+  }
+
   const ready = status?.ready_for_live ?? false
 
   return (
@@ -285,6 +339,28 @@ export default function LiveDashboard() {
         >
           Durdur
         </button>
+
+        {/* Kill switch (FAZ 3 — K-19) */}
+        {status?.panic ? (
+          <button
+            onClick={handleClearPanic}
+            className="px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-600 text-sm font-bold transition"
+          >
+            🔓 Kilidi Kaldır
+          </button>
+        ) : (
+          <button
+            onClick={handlePanic}
+            className="px-4 py-2 rounded-lg bg-red-950 border border-red-600 hover:bg-red-900 text-red-300 text-sm font-bold transition"
+          >
+            🚨 PANİK
+          </button>
+        )}
+        {status?.panic && (
+          <span className="text-red-400 text-xs font-bold animate-pulse">
+            🚨 PANİK KİLİDİ AKTİF — bot başlatılamaz
+          </span>
+        )}
 
         {/* Mod seçici */}
         <div className="flex rounded-lg overflow-hidden border border-slate-700 text-xs font-medium ml-1">
@@ -383,11 +459,80 @@ export default function LiveDashboard() {
               <div className="text-slate-500">{c.label}</div>
             </div>
           ))}
-          {health.daily_paused && (
-            <span className="ml-auto rounded bg-amber-900/60 px-2 py-1 text-xs font-medium text-amber-300">
-              ⏸ Günlük fren aktif
-            </span>
+          {(health.daily_paused || health.health_paused || health.panic) && (
+            <div className="ml-auto flex items-center gap-2">
+              {health.panic && (
+                <span className="rounded bg-red-900/70 px-2 py-1 text-xs font-bold text-red-300 animate-pulse">
+                  🚨 Panik kilidi
+                </span>
+              )}
+              {health.health_paused && (
+                <span className="rounded bg-orange-900/60 px-2 py-1 text-xs font-medium text-orange-300">
+                  ⛔ Sağlık duraklatması
+                </span>
+              )}
+              {health.daily_paused && (
+                <span className="rounded bg-amber-900/60 px-2 py-1 text-xs font-medium text-amber-300">
+                  ⏸ Günlük fren aktif
+                </span>
+              )}
+            </div>
           )}
+        </div>
+      )}
+
+      {/* ── Karar Paneli (FAZ 4 — K-20): neden işlem var/yok ─────────── */}
+      {Object.keys(decisions).length > 0 && (
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/80 px-5 py-4">
+          <div className="text-sm font-medium text-white mb-3 border-b border-slate-800 pb-2">
+            Karar Paneli <span className="text-xs text-slate-500 ml-1">son sinyal değerlendirmesi · gerekçeli</span>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {Object.values(decisions).map(d => {
+              const label = d.opened
+                ? `${d.direction} AÇILDI`
+                : REASON_TR[d.blocked_by ?? ''] ?? d.blocked_by ?? '—'
+              const chipCls = d.opened
+                ? 'bg-green-900/60 text-green-300'
+                : d.blocked_by === 'NO_SIGNAL'
+                  ? 'bg-slate-800 text-slate-400'
+                  : 'bg-red-900/50 text-red-300'
+              const det = d.detail ?? {}
+              return (
+                <div key={d.symbol} className="rounded-xl border border-slate-700 bg-slate-800/60 p-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-semibold text-white text-sm">{d.symbol}</span>
+                    <div className="flex items-center gap-2">
+                      <span className={`px-2 py-0.5 rounded text-xs font-semibold ${chipCls}`}>{label}</span>
+                      <span className="text-xs text-slate-500 tabular-nums">
+                        {new Date(d.ts).toLocaleTimeString('tr-TR')}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400 tabular-nums">
+                    {det.proba_long !== undefined && det.thr_long !== undefined && (
+                      <span>
+                        L: <span className={det.proba_long >= det.thr_long ? 'text-green-400' : 'text-slate-300'}>
+                          {(det.proba_long * 100).toFixed(1)}%
+                        </span>
+                        <span className="text-slate-600">/{(det.thr_long * 100).toFixed(1)}%</span>
+                      </span>
+                    )}
+                    {det.proba_short !== undefined && det.thr_short !== undefined && (
+                      <span>
+                        S: <span className={det.proba_short >= det.thr_short ? 'text-green-400' : 'text-slate-300'}>
+                          {(det.proba_short * 100).toFixed(1)}%
+                        </span>
+                        <span className="text-slate-600">/{(det.thr_short * 100).toFixed(1)}%</span>
+                      </span>
+                    )}
+                    {det.adx !== undefined && <span>ADX: {det.adx}</span>}
+                    {det.ob !== undefined && <span>OB: {det.ob > 0 ? '+' : ''}{det.ob}</span>}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
         </div>
       )}
 

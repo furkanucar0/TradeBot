@@ -49,6 +49,15 @@ MIN_DIRECTION_PREC = 0.35  # mutlak precision tabanı (dinamik taban bununla max
 SL_GRID = [0.003, 0.004, 0.005]
 TP_GRID = [0.006, 0.008, 0.010, 0.012]
 
+# ── Risk duvarı (FAZ 3 — K-19) ───────────────────────────────────────────────
+HEALTH_PAUSE_SCORE  = 40   # sağlık skoru bunun ALTINA inerse yeni işlem duraklar
+HEALTH_RESUME_SCORE = 55   # histerezis: bu skora çıkmadan devam edilmez
+ADX_RANGING_FLOOR   = 20   # 1h ADX bunun altı = yönsüz piyasa, sinyal yok (live_trader'dan taşındı)
+OB_IMBALANCE_LIMIT  = 0.15 # emir defteri dengesizlik veto eşiği (live_trader'dan taşındı)
+
+# ── Karar kaydı (FAZ 4 — K-20) ───────────────────────────────────────────────
+DECISIONS_KEEP_DAYS = 7    # decisions tablosunda tutulacak gün sayısı
+
 # ── Sağlık skoru (FAZ 2 — K-18) ──────────────────────────────────────────────
 # Bileşen ağırlıkları (toplam 100)
 HEALTH_WEIGHTS = {

@@ -20,6 +20,12 @@ Hedef: günlük %1-2 istikrarlı getiri, düşük varyans. Kararlılık **R:R'ı
 | Günlük kâr kilidi | Gün içi **+%2** → kâr korunur | Aynı mekanizma |
 | Maks pozisyon | 2 (sembol başına 1) | |
 | Maliyet modeli | %0.10 komisyon+slippage + funding | Backtest ve paper'da aynen; rapor PnL'i giriş ücreti DAHİL |
+| **RiskGate (K-19)** | TÜM vetolar tek sınıfta: ADX<20, trend vetosu, emir defteri, kapasite | `risk_gate.py` — davranış birebir, mimari tekil |
+| **Panik kilidi (K-19)** | /panik → pozisyonlar kapanır + bot durur + `panic.lock` | Restart'a dayanır; /panik_kaldir olmadan bot BAŞLATILAMAZ (423) |
+| **Sağlık duraklatması (K-19)** | Skor **<40** → yeni işlem yok; **≥55** olunca devam | Histerezis; veri kesintisi skoru düşürdüğünden besleme ölünce otomatik durur |
+
+## Karar görünürlüğü (K-20)
+Her sinyal kararı gerekçe koduyla kaydedilir: dashboard **Karar Paneli** (canlı), `GET /decisions` (7 gün geçmiş; NO_SIGNAL hariç). "Neden işlem yok" artık veriyle cevaplanır.
 
 ## Örnek (100 USDT kasa, SL %0.5)
 Başlangıç: marjin 10 × 5x = 50 notional → SL kaybı 0.25 USDT (%0.25) · TP kazancı ~0.5 USDT.
