@@ -175,10 +175,11 @@ async def get_status():
 
 # ── Train ─────────────────────────────────────────────────────────────────────
 @app.post("/train")
-async def trigger_train(background_tasks: BackgroundTasks, days: int = 45):
+async def trigger_train(background_tasks: BackgroundTasks, days: int = 45, force: bool = False):
     """days: eğitimde kullanılacak son gün sayısı (0 = tüm veri).
     Varsayılan 45 — tam veride sinyal rejim-bağımlı olduğu için uzun pencereler
-    her iki yönü de precision kapısına takıp sinyalsiz model üretiyor."""
+    her iki yönü de precision kapısına takıp sinyalsiz model üretiyor.
+    force=true (K-22): C-v-C kıyası atlanır, yeni model her durumda yüklenir."""
     if _bot_state["is_training"]:
         raise HTTPException(400, "Eğitim zaten devam ediyor")
 
@@ -190,17 +191,27 @@ async def trigger_train(background_tasks: BackgroundTasks, days: int = 45):
         try:
             import train_engine
             train_engine.broadcast = _push_event
-            train_engine.main(run_server=False, days=days)
-            p = REPORTS_DIR / "backtest_summary.json"
-            if p.exists():
-                s = json.loads(p.read_text(encoding="utf-8"))
-                _bot_state["last_summary"] = s
+            outcome = train_engine.main(run_server=False, days=days, force_deploy=force) or {}
+            if not outcome.get("deployed", True):
+                # K-22: şampiyon savundu — canlı model ve dashboard raporu değişmedi
                 tg.send_async(
-                    f"✅ <b>Eğitim tamamlandı!</b>\n"
-                    f"Win Rate: {s.get('win_rate',0)*100:.1f}% | R:R: {s.get('rr',0):.2f}\n"
-                    f"Sharpe: {s.get('sharpe',0):.2f} | Max DD: {s.get('max_drawdown',0)*100:.1f}%\n"
-                    f"Yön: {s.get('direction','?')} | /paper ile botu başlat"
+                    f"🛡 <b>Şampiyon Savundu</b>\n"
+                    f"Yeni model doğrulamada mevcut modeli yenemedi — model DEĞİŞMEDİ.\n"
+                    f"Challenger EV: {outcome.get('challenger_val_ev', 0):+.2f} | "
+                    f"Şampiyon EV: {outcome.get('champion_val_ev', 0):+.2f}\n"
+                    f"Detay: reports/challenger_last.json"
                 )
+            else:
+                p = REPORTS_DIR / "backtest_summary.json"
+                if p.exists():
+                    s = json.loads(p.read_text(encoding="utf-8"))
+                    _bot_state["last_summary"] = s
+                    tg.send_async(
+                        f"✅ <b>Eğitim tamamlandı — yeni model görevde!</b>\n"
+                        f"Win Rate: {s.get('win_rate',0)*100:.1f}% | R:R: {s.get('rr',0):.2f}\n"
+                        f"Sharpe: {s.get('sharpe',0):.2f} | Max DD: {s.get('max_drawdown',0)*100:.1f}%\n"
+                        f"Yön: {s.get('direction','?')} | /paper ile botu başlat"
+                    )
         except Exception as e:
             _push_event({"phase": "error", "msg": str(e)})
             tg.send_async(f"❌ Eğitim hatası: {e}")
@@ -208,7 +219,7 @@ async def trigger_train(background_tasks: BackgroundTasks, days: int = 45):
             _bot_state["is_training"] = False
 
     background_tasks.add_task(run_training)
-    return {"status": "started"}
+    return {"status": "started", "force": force}
 
 
 # ── Candles ───────────────────────────────────────────────────────────────────

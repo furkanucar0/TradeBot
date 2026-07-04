@@ -31,6 +31,9 @@ export interface Trade {
   exit_reason: string | null
   pnl_usdt: number | null
   status: string
+  mfe_pct?: number | null
+  mae_pct?: number | null
+  self_eval?: string | null
 }
 
 export interface BacktestSummary {

@@ -13,6 +13,17 @@ function fmtTs(ts: number) {
   return new Date(ts).toLocaleString('tr-TR')
 }
 
+// FAZ 5 (K-21): öz-değerlendirme etiketleri
+const EVAL_TR: Record<string, { label: string; cls: string }> = {
+  STOP_DAR:   { label: 'stop dar',    cls: 'bg-orange-900/60 text-orange-300' },
+  YANLIS_YON: { label: 'yanlış yön',  cls: 'bg-red-900/50 text-red-300' },
+  TEMIZ_TP:   { label: 'temiz',       cls: 'bg-green-900/60 text-green-300' },
+  SANSLI_TP:  { label: 'şanslı',      cls: 'bg-yellow-900/60 text-yellow-300' },
+  NORMAL_SL:  { label: 'normal',      cls: 'bg-slate-700 text-slate-300' },
+  NORMAL_TP:  { label: 'normal',      cls: 'bg-slate-700 text-slate-300' },
+  MANUEL:     { label: 'manuel',      cls: 'bg-slate-700 text-slate-300' },
+}
+
 export default function TradeHistory() {
   const [trades, setTrades]     = useState<Trade[]>([])
   const [mode, setMode]         = useState<Mode>('all')
@@ -189,6 +200,8 @@ export default function TradeHistory() {
                 <th className="text-right py-2 pr-2">Çıkış</th>
                 <th className="text-right py-2 pr-2">PnL</th>
                 <th className="text-left py-2 pr-2">Neden</th>
+                <th className="text-right py-2 pr-2" title="Lehte / aleyhte en uç hareket (%)">MFE·MAE</th>
+                <th className="text-left py-2 pr-2" title="Kapanış öz-değerlendirmesi">Değ.</th>
                 <th className="text-left py-2 pr-2">Tip</th>
                 <th className="text-right py-2">Tarih</th>
               </tr>
@@ -242,6 +255,16 @@ export default function TradeHistory() {
                         ? <span className={`px-1.5 py-0.5 rounded text-xs ${reasonColor}`}>{t.exit_reason}</span>
                         : <span className="text-slate-600 text-xs">{t.status}</span>
                       }
+                    </td>
+                    <td className="py-1.5 pr-2 text-right tabular-nums text-slate-400">
+                      {t.mfe_pct != null && t.mae_pct != null
+                        ? <><span className="text-green-500/80">{t.mfe_pct.toFixed(2)}</span><span className="text-slate-600">·</span><span className="text-red-500/80">{t.mae_pct.toFixed(2)}</span></>
+                        : '—'}
+                    </td>
+                    <td className="py-1.5 pr-2">
+                      {t.self_eval && EVAL_TR[t.self_eval]
+                        ? <span className={`px-1.5 py-0.5 rounded text-xs ${EVAL_TR[t.self_eval].cls}`}>{EVAL_TR[t.self_eval].label}</span>
+                        : <span className="text-slate-600 text-xs">—</span>}
                     </td>
                     <td className="py-1.5 pr-2">
                       <span className={`px-1.5 py-0.5 rounded text-xs ${isPaper ? 'bg-teal-900/60 text-teal-300' : 'bg-orange-900/60 text-orange-300'}`}>

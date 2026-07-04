@@ -27,6 +27,12 @@ Hedef: günlük %1-2 istikrarlı getiri, düşük varyans. Kararlılık **R:R'ı
 ## Karar görünürlüğü (K-20)
 Her sinyal kararı gerekçe koduyla kaydedilir: dashboard **Karar Paneli** (canlı), `GET /decisions` (7 gün geçmiş; NO_SIGNAL hariç). "Neden işlem yok" artık veriyle cevaplanır.
 
+## MFE/MAE hafızası (K-21)
+Her işlemde lehte (MFE) ve aleyhte (MAE) en uç hareket kaydedilir; kapanışta öz-değerlendirme etiketi düşülür (stop dar / yanlış yön / şanslı TP / temiz TP). **SL/TP seviyelerini değiştirme kararı, ≥30 SL örneği birikince bu veriyle verilecek** — sezgiyle değil. STOP_DAR oranı yüksekse stop dar/TP uzak; YANLIS_YON baskınsa sorun girişte (model/filtre).
+
+## Model değişim sigortası (K-22)
+Retrain, modeli ancak ortak doğrulamada **kanıtlanmış iyileşme** varsa değiştirir (Champion vs Challenger, eşik +%5 EV). Kötü pencereye denk gelen retrain artık çalışan modeli bozamaz → [[Pencere-Hassasiyeti]].
+
 ## Örnek (100 USDT kasa, SL %0.5)
 Başlangıç: marjin 10 × 5x = 50 notional → SL kaybı 0.25 USDT (%0.25) · TP kazancı ~0.5 USDT.
 DD %10'da: marjin 5 × 3x = 15 notional → kayıp %0.08'e çöker — sistem kötü seride kendini kısar.

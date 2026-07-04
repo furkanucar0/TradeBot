@@ -113,6 +113,12 @@ class Database:
             await self.conn.execute("ALTER TABLE trades ADD COLUMN paper INTEGER DEFAULT 1")
         except Exception:
             pass  # zaten var
+        # Migration (FAZ 5 — K-21): MFE/MAE hafızası + öz-değerlendirme
+        for col in ("mfe_pct REAL", "mae_pct REAL", "self_eval TEXT"):
+            try:
+                await self.conn.execute(f"ALTER TABLE trades ADD COLUMN {col}")
+            except Exception:
+                pass  # zaten var
         await self.conn.commit()
 
     async def close(self) -> None:
@@ -167,11 +173,14 @@ class Database:
         await self.conn.commit()
         return cursor.lastrowid
 
-    async def close_trade(self, trade_id: int, exit_price: float, exit_ts: int, exit_reason: str, pnl_usdt: float) -> None:
+    async def close_trade(self, trade_id: int, exit_price: float, exit_ts: int, exit_reason: str, pnl_usdt: float,
+                          mfe_pct: Optional[float] = None, mae_pct: Optional[float] = None,
+                          self_eval: Optional[str] = None) -> None:
         assert self.conn is not None
         await self.conn.execute(
-            "UPDATE trades SET exit_price=?, exit_ts=?, exit_reason=?, pnl_usdt=?, status='closed' WHERE id=?",
-            (exit_price, exit_ts, exit_reason, pnl_usdt, trade_id),
+            "UPDATE trades SET exit_price=?, exit_ts=?, exit_reason=?, pnl_usdt=?, "
+            "mfe_pct=?, mae_pct=?, self_eval=?, status='closed' WHERE id=?",
+            (exit_price, exit_ts, exit_reason, pnl_usdt, mfe_pct, mae_pct, self_eval, trade_id),
         )
         await self.conn.commit()
 

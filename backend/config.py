@@ -58,6 +58,27 @@ OB_IMBALANCE_LIMIT  = 0.15 # emir defteri dengesizlik veto eşiği (live_trader'
 # ── Karar kaydı (FAZ 4 — K-20) ───────────────────────────────────────────────
 DECISIONS_KEEP_DAYS = 7    # decisions tablosunda tutulacak gün sayısı
 
+# ── MFE/MAE hafızası (FAZ 5 — K-21) ──────────────────────────────────────────
+# Öz-değerlendirme eşikleri: MFE = işlem boyunca lehte en uç hareket,
+# MAE = aleyhte en uç hareket (giriş fiyatına oran)
+MFE_NEAR_TP_RATIO = 0.8    # SL yedi ama MFE ≥ TP'nin %80'i → "stop dar / TP uzak"
+MAE_NEAR_SL_RATIO = 0.8    # TP vurdu ama MAE ≥ SL'in %80'i → "şanslı kazanç"
+MFE_LOW_RATIO     = 0.3    # SL yedi ve MFE < TP'nin %30'u → "yanlış yön"
+
+# ── Champion vs Challenger (FAZ 6 — K-22) ────────────────────────────────────
+# Retrain'de yeni model (challenger), mevcut şampiyonu ORTAK doğrulama
+# diliminde yenemezse model.bin DEĞİŞMEZ (pencere hassasiyetine karşı sigorta)
+CHALLENGER_MIN_IMPROVE = 0.05   # şampiyon EV'sinin en az %5 üstü gerekir
+
+# ── Mainnet Geçiş Protokolü (FAZ 7 — K-23) ───────────────────────────────────
+# "Paper'a sabır" ilkesinin resmileşmesi: TÜM koşullar sağlanmadan gerçek para
+# açılmaz; sağlansa bile Telegram'dan iki adımlı onay şarttır (/canli → /canli_onay)
+MAINNET_MIN_TRADES    = 100    # asgari kapanmış paper işlem (TP/SL çıkışlı)
+MAINNET_MIN_DAYS      = 14     # asgari paper kanıt süresi (gün)
+MAINNET_MAX_DD        = 0.15   # paper equity maks. drawdown
+MAINNET_WORST_DAY_PCT = -0.03  # tek günde bundan kötü kayıp varsa geçilmez
+MAINNET_CONFIRM_S     = 300    # /canli sonrası onay penceresi (saniye)
+
 # ── Sağlık skoru (FAZ 2 — K-18) ──────────────────────────────────────────────
 # Bileşen ağırlıkları (toplam 100)
 HEALTH_WEIGHTS = {

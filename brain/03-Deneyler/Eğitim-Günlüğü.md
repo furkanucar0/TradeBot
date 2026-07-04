@@ -28,3 +28,10 @@ tags: [günlük, otomatik]
 - SL/TP: 0.5%/1.0% (R:R 2.0) | rapor yönü: SHORT | thrL=0.62 thrS=0.52
 - Test: 88 işlem | WR 28.4% | PnL -13.16 USDT | Sharpe -3.89 | MaxDD 15.0%
 - Günlük ort -1.46% | en kötü gün -5.50% | Canlı hazır: ✗ HAYIR
+
+### 2026-07-05 00:34
+- Pencere: son 45 gün | temiz satır: 72174
+- SL/TP: 0.5%/1.0% (R:R 2.0) | rapor yönü: SHORT | thrL=0.58 thrS=0.64
+- Test: 26 işlem | WR 26.9% | PnL -5.03 USDT | Sharpe -4.73 | MaxDD 7.0%
+- Günlük ort -1.68% | en kötü gün -6.17% | Canlı hazır: ✗ HAYIR
+- C-v-C: 🏆 CHALLENGER geçti — challenger +974.10 vs şampiyon +772.20 (gereken fark ≥ 38.61)

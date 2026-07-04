@@ -32,4 +32,7 @@ Doğrulamada **beklenen toplam net PnL maksimizasyonu (K-15)**: sinyal sayısı 
 - Otomatik: her 20 kapanan paper işlemde (eğitim sırasında yeni pozisyon açılmaz; yeni SL/TP devralınır)
 - Her eğitim `model_runs` tablosuna + [[Eğitim-Günlüğü]]'ne kaydolur
 
+## Champion vs Challenger (K-22 — 05.07)
+Retrain modeli körlemesine EZMEZ. Yeni model (challenger) ortak doğrulama diliminde şampiyonla **val toplam net EV** üzerinden kıyaslanır; şampiyonun EV'sinin **≥%5 üstünde** değilse `model.bin` ve dashboard raporu DEĞİŞMEZ (challenger raporu `reports/challenger_last.json`'a). Şampiyonun SL/TP kombosu farklıysa doğrulama etiketleri onun kombosuyla yeniden üretilir — adil kıyas. Kaçış kapısı: `/train?force=true`. Sonuç her eğitim günlüğü kaydında "C-v-C:" satırında.
+
 İlgili: [[2026-07-03-Kalibrasyon-Kanıtı]], [[2026-07-03-RR-Bandı-Deneyi]]

@@ -21,7 +21,8 @@ import requests as _req
 from config import (
     CANDLE_BUFFER_SIZE, DAILY_LOSS_LIMIT_PCT, DAILY_PROFIT_LOCK_PCT,
     DECISIONS_KEEP_DAYS, DEMO_START_BALANCE, FEE_RATE, LEVERAGE, LOOP_INTERVAL,
-    MAX_POSITIONS, RETRAIN_DAYS, RETRAIN_MIN_GAP_S, RETRAIN_MIN_TRADES,
+    MAE_NEAR_SL_RATIO, MAX_POSITIONS, MFE_LOW_RATIO, MFE_NEAR_TP_RATIO,
+    RETRAIN_DAYS, RETRAIN_MIN_GAP_S, RETRAIN_MIN_TRADES,
     RISK_PER_TRADE, SIGNAL_MARGIN, SLIPPAGE_RATE, SYMBOLS, TIMEFRAME,
 )
 from database import Database
@@ -314,6 +315,31 @@ def _calc_dynamic_threshold(base_adj: float, features: Dict[str, float], sym: st
     return float(np.clip(adj, 0.0, 0.25))
 
 
+def _self_evaluate(result: str, mfe: float, mae: float,
+                   sl_pct: float, tp_pct: float) -> tuple:
+    """
+    K-21 (FAZ 5): kapanışta öz-değerlendirme. MFE (lehte en uç hareket) ve
+    MAE (aleyhte en uç hareket) hedef mesafelere oranlanır — "stop dar mı,
+    TP uzak mı" sorusuna işlem başına sayısal etiket üretir.
+    Döner: (kod, açıklama)
+    """
+    mfe_r = mfe / tp_pct if tp_pct > 0 else 0.0
+    mae_r = mae / sl_pct if sl_pct > 0 else 0.0
+    if result == "SL":
+        if mfe_r >= MFE_NEAR_TP_RATIO:
+            return "STOP_DAR", f"SL yedi ama fiyat TP'nin %{mfe_r*100:.0f}'ine ulaşmıştı — stop dar / TP uzak sinyali"
+        if mfe_r < MFE_LOW_RATIO:
+            return "YANLIS_YON", f"Lehte hareket TP'nin yalnız %{mfe_r*100:.0f}'i — giriş yönü baştan tersti"
+        return "NORMAL_SL", f"Lehte hareket TP'nin %{mfe_r*100:.0f}'i — olağan kayıp"
+    if result == "TP":
+        if mae_r >= MAE_NEAR_SL_RATIO:
+            return "SANSLI_TP", f"TP vurdu ama fiyat SL'in %{mae_r*100:.0f}'ine dayanmıştı — şanslı kazanç"
+        if mae_r <= MFE_LOW_RATIO:
+            return "TEMIZ_TP", f"Aleyhte hareket SL'in yalnız %{mae_r*100:.0f}'i — temiz kazanç"
+        return "NORMAL_TP", f"Aleyhte hareket SL'in %{mae_r*100:.0f}'i — olağan kazanç"
+    return "MANUEL", f"MFE TP'nin %{mfe_r*100:.0f}'i · MAE SL'in %{mae_r*100:.0f}'i"
+
+
 def _proba_scale(proba: float, rr: float) -> float:
     """
     K-14 (H-1): İşlem bazlı Kelly — işlemin KENDİ olasılığıyla boyut ölçeği.
@@ -603,6 +629,23 @@ async def _run_async(testnet: bool) -> None:
                                    "msg": "🚨 Panik: tüm pozisyonlar kapatıldı — bot durduruluyor"})
                         stop()
 
+                # ── MFE/MAE takibi (K-21 / FAZ 5): saniyelik uç hareket kaydı ─
+                # Fiyat beslemesi zaten akıyor — maliyetsiz hafıza. Not: giriş
+                # dakikasının mumu girişten önceki tikleri de içerir; ilk dakika
+                # için küçük bir üst tahmin payı vardır (bilinçli kabul).
+                for _ms, _mp in demo_positions.items():
+                    _mc = _last_candles.get(_ms)
+                    if not _mc:
+                        continue
+                    if _mp["side"] == "LONG":
+                        _fav = (_mc["high"] - _mp["entry"]) / _mp["entry"]
+                        _adv = (_mp["entry"] - _mc["low"]) / _mp["entry"]
+                    else:
+                        _fav = (_mp["entry"] - _mc["low"]) / _mp["entry"]
+                        _adv = (_mc["high"] - _mp["entry"]) / _mp["entry"]
+                    _mp["mfe"] = max(_mp.get("mfe", 0.0), _fav)
+                    _mp["mae"] = max(_mp.get("mae", 0.0), _adv)
+
                 for sym in list(_manual_close_requests):
                     _manual_close_requests.discard(sym)
                     if sym not in demo_positions:
@@ -619,10 +662,18 @@ async def _run_async(testnet: bool) -> None:
                     demo_balance += pnl_net
                     peak_balance  = max(peak_balance, demo_balance)
                     realized_pnl += pnl_net
-                    demo_trades.append({"result": "MANUAL", "pnl": pnl_rep, "sym": sym})
+                    _mfe, _mae = pos.get("mfe", 0.0), pos.get("mae", 0.0)
+                    _evc, _evt = _self_evaluate("MANUAL", _mfe, _mae, sl_pct, tp_pct)
+                    demo_trades.append({"result": "MANUAL", "pnl": pnl_rep, "sym": sym,
+                                        "mfe_r": _mfe / tp_pct if tp_pct > 0 else 0.0,
+                                        "mae_r": _mae / sl_pct if sl_pct > 0 else 0.0,
+                                        "eval": _evc})
                     if pos.get("db_id"):
                         await db.close_trade(pos["db_id"], round(exit_price, 4),
-                                             int(time.time() * 1000), "MANUAL", round(pnl_rep, 4))
+                                             int(time.time() * 1000), "MANUAL", round(pnl_rep, 4),
+                                             mfe_pct=round(_mfe * 100, 4),
+                                             mae_pct=round(_mae * 100, 4),
+                                             self_eval=_evc)
                     broadcast({
                         "phase": "trade_close", "symbol": sym, "result": "MANUAL",
                         "entry": round(pos["entry"], 4), "exit": round(exit_price, 4),
@@ -786,12 +837,22 @@ async def _run_async(testnet: bool) -> None:
                     day_wr = wins / len(day_trades)
                     ret    = realized_pnl / day_start_balance * 100 if day_start_balance > 0 else 0.0
                     emoji  = "📈" if realized_pnl >= 0 else "📉"
+                    # K-21: MFE/MAE günlük içgörü — SL'ler TP'ye ne kadar yaklaştı?
+                    _sl_mfe = [t["mfe_r"] for t in day_trades
+                               if t["result"] == "SL" and t.get("mfe_r") is not None]
+                    _stop_dar = sum(1 for t in day_trades if t.get("eval") == "STOP_DAR")
+                    _sansli   = sum(1 for t in day_trades if t.get("eval") == "SANSLI_TP")
+                    mfe_line = ""
+                    if _sl_mfe:
+                        mfe_line = (f"\n🧠 SL'lerde ort. TP-yaklaşımı: %{sum(_sl_mfe)/len(_sl_mfe)*100:.0f}"
+                                    f" | stop-dar: {_stop_dar} | şanslı TP: {_sansli}")
                     tg.send_async(
                         f"{emoji} <b>Günlük Rapor | {loss_day}</b>\n"
                         f"İşlem: {len(day_trades)} ({wins} TP / {len(day_trades)-wins} diğer)\n"
                         f"Gün WR: {day_wr:.0%}\n"
                         f"Gün PnL: <b>{realized_pnl:+.2f} USDT ({ret:+.2f}%)</b>\n"
                         f"Kasa: <b>{demo_balance:.2f} USDT</b>"
+                        + mfe_line
                         + ("\n⏸ Gün frenle kapandı" if daily_paused else "")
                     )
                 else:
@@ -836,6 +897,9 @@ async def _run_async(testnet: bool) -> None:
                             pnl_pct = (pnl_rep / pos["margin"]) * 100
                             balance_delta += pnl_net
                             realized_pnl  += pnl_net
+                            # ── MFE/MAE öz-değerlendirmesi (K-21 / FAZ 5) ────
+                            mfe, mae = pos.get("mfe", 0.0), pos.get("mae", 0.0)
+                            ev_code, ev_text = _self_evaluate(result, mfe, mae, sl_pct, tp_pct)
                             # DB'de trade'i kapat
                             if pos.get("db_id"):
                                 await db.close_trade(
@@ -844,9 +908,15 @@ async def _run_async(testnet: bool) -> None:
                                     int(time.time() * 1000),
                                     result,
                                     round(pnl_rep, 4),
+                                    mfe_pct=round(mfe * 100, 4),
+                                    mae_pct=round(mae * 100, 4),
+                                    self_eval=ev_code,
                                 )
                             demo_positions.pop(sym, None)
-                            demo_trades.append({"result": result, "pnl": pnl_rep, "sym": sym})
+                            demo_trades.append({"result": result, "pnl": pnl_rep, "sym": sym,
+                                                "mfe_r": mfe / tp_pct if tp_pct > 0 else 0.0,
+                                                "mae_r": mae / sl_pct if sl_pct > 0 else 0.0,
+                                                "eval": ev_code})
 
                             # ── Öz-analiz ────────────────────────────────────
                             rec = {
@@ -872,6 +942,10 @@ async def _run_async(testnet: bool) -> None:
                                 "rolling_wr": round(rolling_wr, 3),
                                 "rolling_n":  n,
                                 "avg_proba":  round(avg_proba, 3),
+                                "mfe_pct":    round(mfe * 100, 3),
+                                "mae_pct":    round(mae * 100, 3),
+                                "self_eval":  ev_code,
+                                "self_eval_text": ev_text,
                             })
 
                             # ── Otomatik yeniden eğitim: ≥20 yeni işlem VE ≥12 saat ara ──
@@ -889,8 +963,22 @@ async def _run_async(testnet: bool) -> None:
                                     try:
                                         import train_engine
                                         train_engine.broadcast = broadcast
-                                        train_engine.main(run_server=False, days=RETRAIN_DAYS)
-                                        if MODEL_PATH.exists():
+                                        # K-22 (FAZ 6): challenger şampiyonu ortak
+                                        # doğrulamada yenemezse model.bin DEĞİŞMEZ
+                                        outcome = train_engine.main(run_server=False, days=RETRAIN_DAYS) or {}
+                                        if not outcome.get("deployed", True):
+                                            _c = outcome.get("champion_val_ev")
+                                            _n = outcome.get("challenger_val_ev")
+                                            broadcast({"phase": "server",
+                                                       "msg": (f"🛡 Şampiyon savundu — model DEĞİŞMEDİ "
+                                                               f"(challenger val-EV {_n:+.2f} ≤ şampiyon {_c:+.2f})")})
+                                            tg.send_async(
+                                                f"🛡 <b>Şampiyon Savundu</b>\n"
+                                                f"Yeni model doğrulamada mevcut modeli yenemedi.\n"
+                                                f"Challenger EV: {_n:+.2f} | Şampiyon EV: {_c:+.2f}\n"
+                                                f"Canlı model DEĞİŞMEDİ."
+                                            )
+                                        elif MODEL_PATH.exists():
                                             model_payload = _load_model()
                                             # yeni modelin SL/TP'sini de devral
                                             sl_pct = model_payload.get("sl_pct", sl_pct)
@@ -914,6 +1002,9 @@ async def _run_async(testnet: bool) -> None:
                                 "pnl":   round(pnl_rep, 4),
                                 "pnl_pct": round(pnl_pct, 2),
                                 "paper": True,
+                                "mfe_pct": round(mfe * 100, 3),
+                                "mae_pct": round(mae * 100, 3),
+                                "self_eval": ev_code,
                             })
                             close_emoji = "✅" if result == "TP" else "❌"
                             pnl_sign    = "+" if pnl_rep >= 0 else ""
@@ -921,6 +1012,8 @@ async def _run_async(testnet: bool) -> None:
                                 f"{close_emoji} <b>{result} | {sym}</b>\n"
                                 f"Giriş: {pos['entry']:.2f}  →  Çıkış: {exit_price:.2f}\n"
                                 f"PnL: <b>{pnl_sign}{pnl_rep:.3f} USDT ({pnl_sign}{pnl_pct:.2f}%)</b>\n"
+                                f"MFE: %{mfe*100:.2f} · MAE: %{mae*100:.2f}\n"
+                                f"🧠 {ev_text}\n"
                                 f"Kasa: <b>{demo_balance + balance_delta:.2f} USDT</b>"
                             )
                     except Exception as e:

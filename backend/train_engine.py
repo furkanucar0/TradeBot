@@ -50,8 +50,8 @@ except Exception:
     FASTAPI_AVAILABLE = False
 
 from config import (
-    FEE_RATE, FUNDING_PER_8H, LEVERAGE, MAX_POSITIONS, MAX_RR,
-    MIN_DIRECTION_PREC, PURGE_HOURS, RISK_PER_TRADE, RR_TARGET,
+    CHALLENGER_MIN_IMPROVE, FEE_RATE, FUNDING_PER_8H, LEVERAGE, MAX_POSITIONS,
+    MAX_RR, MIN_DIRECTION_PREC, PURGE_HOURS, RISK_PER_TRADE, RR_TARGET,
     SL_GRID, SLIPPAGE_RATE, TEST_DAYS, TP_GRID, VAL_DAYS, WIN_RATE_TARGET,
 )
 from database import get_database_path
@@ -711,7 +711,10 @@ def save_report(results: Dict[str, Any], df_test: pd.DataFrame) -> None:
 
 # ── Ana Fonksiyon ─────────────────────────────────────────────────────────────
 
-def main(run_server: bool = True, days: int = 0) -> None:
+def main(run_server: bool = True, days: int = 0,
+         force_deploy: bool = False) -> Optional[Dict[str, Any]]:
+    """Döner (K-22): {"deployed": bool, "challenger_val_ev": %, "champion_val_ev": %|None}
+    force_deploy=True → C-v-C kıyası atlanır, challenger her durumda yüklenir."""
     if run_server:
         start_event_server()
         time.sleep(0.8)
@@ -831,6 +834,7 @@ def main(run_server: bool = True, days: int = 0) -> None:
         return {
             "model": model, "thr": thr,
             "f1_val": f1_val, "prec_val": prec_val,
+            "proba_val": proba_val, "y_val": y_val,   # K-22: C-v-C kıyası için
             "y_pred_test": y_pred_test, "proba_test": proba_test, "y_test": y_test,
             "prec_test": prec_test, "f1_test": f1_test, "acc_test": acc_test,
         }
@@ -855,19 +859,81 @@ def main(run_server: bool = True, days: int = 0) -> None:
         "precision": precision, "f1": f1, "accuracy": acc,
     })
 
-    # Model kaydet — her iki yön birlikte
+    # ── FAZ 6 (K-22): Champion vs Challenger ─────────────────────────────────
+    # Yeni model (challenger) ORTAK doğrulama diliminde mevcut şampiyonla
+    # kıyaslanır; anlamlı iyileşme yoksa model.bin DEĞİŞMEZ. Pencere
+    # hassasiyetine (tek günlük veri kayması sonucu ters çevirir) karşı sigorta.
     model_path = Path(__file__).resolve().parent / "model.bin"
-    joblib.dump({
-        "model_long":    model_long,
-        "model_short":   model_short,
-        "threshold_long":  thr_long,
-        "threshold_short": thr_short,
-        "feature_cols":  FEATURE_COLS,
-        "sl_pct":   best_sl,
-        "tp_pct":   best_tp,
-        "direction": "BIDIR",   # artık her iki yön açık
-    }, str(model_path))
-    broadcast({"phase": "training", "msg": "Cift yonlu model kaydedildi: model.bin", "progress": 77})
+
+    def _val_total_ev(proba, y_true, thr, net_tp_, net_sl_):
+        """Doğrulama diliminde beklenen toplam net PnL (notional %-puanı toplamı)."""
+        if thr is None or thr > 1.0:
+            return 0.0
+        sel = (np.asarray(proba) >= thr).astype(int)
+        ns = int(sel.sum())
+        if ns == 0:
+            return 0.0
+        prec = precision_score(y_true, sel, zero_division=0)
+        return float((prec * net_tp_ - (1 - prec) * net_sl_) * ns)
+
+    chall_ev = (_val_total_ev(res_long["proba_val"], res_long["y_val"], thr_long, _net_tp, _net_sl)
+                + _val_total_ev(res_short["proba_val"], res_short["y_val"], thr_short, _net_tp, _net_sl))
+
+    champ_ev: Optional[float] = None
+    deploy = True
+    cvc_note = "ilk model / şampiyon yok"
+    if force_deploy:
+        cvc_note = "force_deploy — kıyas atlandı"
+    elif model_path.exists():
+        try:
+            champ = joblib.load(str(model_path))
+            if champ.get("model_long") and champ.get("model_short"):
+                c_sl = float(champ.get("sl_pct", best_sl))
+                c_tp = float(champ.get("tp_pct", best_tp))
+                c_net_tp, c_net_sl = c_tp - _cost, c_sl + _cost
+                # Şampiyonun SL/TP'si farklıysa etiketler onun kombosuyla yeniden üretilir
+                labels_c = labels if (c_sl, c_tp) == (best_sl, best_tp) \
+                    else make_labels_bidir(df_feat, c_sl, c_tp)
+                Xv   = df_val[champ.get("feature_cols", FEATURE_COLS)]
+                yv_l = (labels_c.loc[df_val.index] == 1).astype(int).values
+                yv_s = (labels_c.loc[df_val.index] == 2).astype(int).values
+                pv_l = champ["model_long"].predict_proba(Xv)[:, 1]
+                pv_s = champ["model_short"].predict_proba(Xv)[:, 1]
+                champ_ev = (_val_total_ev(pv_l, yv_l, float(champ.get("threshold_long", 1.01)), c_net_tp, c_net_sl)
+                            + _val_total_ev(pv_s, yv_s, float(champ.get("threshold_short", 1.01)), c_net_tp, c_net_sl))
+                margin = max(abs(champ_ev) * CHALLENGER_MIN_IMPROVE, 1e-9)
+                deploy = chall_ev > champ_ev + margin
+                cvc_note = (f"challenger {chall_ev*100:+.2f} vs şampiyon {champ_ev*100:+.2f} "
+                            f"(gereken fark ≥ {margin*100:.2f})")
+            else:
+                cvc_note = "şampiyon eski formatta — challenger geçer"
+        except Exception as e_cvc:
+            cvc_note = f"şampiyon değerlendirilemedi ({e_cvc}) — challenger geçer"
+
+    broadcast({"phase": "cvc",
+               "deployed": deploy,
+               "challenger_val_ev": round(chall_ev * 100, 3),
+               "champion_val_ev": round(champ_ev * 100, 3) if champ_ev is not None else None,
+               "msg": f"C-v-C: {'CHALLENGER KAZANDI — model değişiyor' if deploy else 'ŞAMPİYON SAVUNDU — model.bin değişmiyor'} | {cvc_note}",
+               "progress": 77})
+
+    # Model kaydet — SADECE challenger kazandıysa (her iki yön birlikte)
+    if deploy:
+        joblib.dump({
+            "model_long":    model_long,
+            "model_short":   model_short,
+            "threshold_long":  thr_long,
+            "threshold_short": thr_short,
+            "feature_cols":  FEATURE_COLS,
+            "sl_pct":   best_sl,
+            "tp_pct":   best_tp,
+            "direction": "BIDIR",   # artık her iki yön açık
+        }, str(model_path))
+        broadcast({"phase": "training", "msg": "Cift yonlu model kaydedildi: model.bin", "progress": 78})
+    else:
+        broadcast({"phase": "training",
+                   "msg": "Model KAYDEDİLMEDİ — şampiyon görevde (rapor challenger_last.json'a yazılır)",
+                   "progress": 78})
 
     # Backtest (dominant yon ile) — SADECE dokunulmamış test seti
     results = backtest(df_test, y_pred_final, y_proba_rep, best_sl, best_tp, report_dir)
@@ -912,7 +978,23 @@ def main(run_server: bool = True, days: int = 0) -> None:
     results["ready_for_live"] = bool(ready)
     results["wr_target"] = round(dynamic_wr_target, 4)
 
-    save_report(results, df_test)
+    # K-22: dashboard DAİMA görevdeki modeli gösterir — challenger kaybettiyse
+    # backtest_summary.json'a DOKUNULMAZ, rapor challenger_last.json'a gider
+    if deploy:
+        save_report(results, df_test)
+    else:
+        REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        chall_summary = {k: v for k, v in results.items() if k not in ("equity_curve", "details")}
+        chall_summary["cvc"] = {
+            "deployed": False,
+            "challenger_val_ev": round(chall_ev * 100, 3),
+            "champion_val_ev": round(champ_ev * 100, 3) if champ_ev is not None else None,
+            "note": cvc_note,
+            "ts": int(time.time()),
+        }
+        (REPORTS_DIR / "challenger_last.json").write_text(
+            json.dumps(chall_summary, indent=2, default=str, ensure_ascii=False), encoding="utf-8")
+        broadcast({"phase": "report", "msg": "challenger_last.json kaydedildi (model değişmedi)"})
 
     # ── Model çalışmasını DB'ye kaydet (model_runs) ──────────────────────────
     try:
@@ -925,7 +1007,9 @@ def main(run_server: bool = True, days: int = 0) -> None:
                 int(time.time()), ",".join(symbols), best_sl, best_tp, LEVERAGE,
                 results["win_rate"], results["rr"], precision, f1, acc,
                 len(df_train), len(df_test),
-                f"dir={report_dir} thrL={thr_long:.2f} thrS={thr_short:.2f} ready={ready}",
+                (f"dir={report_dir} thrL={thr_long:.2f} thrS={thr_short:.2f} ready={ready} "
+                 f"cvc={'DEPLOY' if deploy else 'REJECT'} chalEV={chall_ev*100:+.2f}"
+                 + (f" champEV={champ_ev*100:+.2f}" if champ_ev is not None else "")),
             ),
         )
         conn.commit()
@@ -951,6 +1035,7 @@ def main(run_server: bool = True, days: int = 0) -> None:
                     f"- Günlük ort {results.get('daily_avg_pct', 0):+.2f}% | "
                     f"en kötü gün {results.get('daily_worst_pct', 0):+.2f}% | "
                     f"Canlı hazır: {'✓ EVET' if ready else '✗ HAYIR'}\n"
+                    f"- C-v-C: {'🏆 CHALLENGER geçti' if deploy else '🛡 ŞAMPİYON savundu (model değişmedi)'} — {cvc_note}\n"
                 )
     except Exception:
         pass
@@ -963,13 +1048,18 @@ def main(run_server: bool = True, days: int = 0) -> None:
         f"R:R={rr:.1f}/{RR_TARGET} Sharpe={results['sharpe']:.2f} "
         f"EV={'pozitif' if ev_positive else 'negatif'}"
     )
-    broadcast({
+    # K-22: challenger kaybettiyse frontend'e onun özetini YAYMA — dashboard
+    # /backtest'i yeniden çeker ve görevdeki şampiyonun raporunu gösterir
+    complete_ev: Dict[str, Any] = {
         "phase": "complete",
-        "msg": msg_ready,
+        "msg": msg_ready if deploy else f"Şampiyon savundu — canlı model değişmedi | {cvc_note}",
         "progress": 100,
         "ready_for_live": ready,
-        "summary": results,
-    })
+        "cvc_deployed": deploy,
+    }
+    if deploy:
+        complete_ev["summary"] = results
+    broadcast(complete_ev)
 
     print("\n=== Backtest Ozeti ===================================")
     print(f"  Yon        : {results.get('direction','?')}")
@@ -999,11 +1089,18 @@ def main(run_server: bool = True, days: int = 0) -> None:
         except KeyboardInterrupt:
             pass
 
+    return {
+        "deployed": deploy,
+        "challenger_val_ev": round(chall_ev * 100, 3),
+        "champion_val_ev": round(champ_ev * 100, 3) if champ_ev is not None else None,
+    }
+
 
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
     p.add_argument("--no-server", action="store_true", help="API sunucusunu başlatma")
     p.add_argument("--days", type=int, default=0, help="Sadece son N günü kullan (hızlı test)")
+    p.add_argument("--force", action="store_true", help="C-v-C kıyasını atla, modeli her durumda yükle")
     args = p.parse_args()
-    main(run_server=not args.no_server, days=args.days)
+    main(run_server=not args.no_server, days=args.days, force_deploy=args.force)
