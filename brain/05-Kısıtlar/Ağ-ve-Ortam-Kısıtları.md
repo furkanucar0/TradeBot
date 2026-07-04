@@ -9,7 +9,8 @@ Bu makineye/ağa özgü, **kod hatası olmayan** kalıcı gerçekler. Yeni bir "
 ## 1. Binance WebSocket market datası AKMIYOR ⚠️
 - Bağlantı kurulur, SUBSCRIBE ACK gelir, ama kline frame'leri **hiç gelmez** (path-based ve subscribe-based ikisi de denendi, 2026-07-03).
 - Muhtemel neden: ISS/bölge filtresi. REST (fapi.binance.com) sorunsuz.
-- Çözüm: `live_trader._rest_price_loop` — 5 sn'lik REST fiyat beslemesi. **Bunu kaldırma!** WS paralel durur; başka ağda çalışırsa hızlı tick sağlar.
+- Çözüm: `live_trader._rest_price_loop` — 2 sn'lik REST fiyat beslemesi. **Bunu kaldırma!** WS paralel durur; başka ağda çalışırsa hızlı tick sağlar.
+- **WS log gürültüsü (04.07 düzeltildi):** WS her ~10 dk "bağlan → ping timeout → kop" döngüsüne giriyor ve logu çöple dolduruyordu. Yeni davranış: "kuruldu" mesajı ancak GERÇEKTEN veri akarsa basılır; hatalar 1. ve her 20.'de loglanır; bekleme üstel 3sn→5dk. Ayrıca emir defteri "geçildi" mesajı yalnızca sinyal gerçekten bloklanınca basılır (eskiden OB lehteyken bile basılıp kafa karıştırıyordu).
 - Botun tarihinde hiç işlem olmamasının üç nedeninden biri buydu (diğerleri: K-3 eşik bug'ı, tam-veri eğitimi).
 
 ## 2. Task Scheduler tuzakları

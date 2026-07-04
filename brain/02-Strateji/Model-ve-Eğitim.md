@@ -25,7 +25,7 @@ Her mum için ileri tarama: `1` = LONG TP'si SL'den önce vurulur, `2` = SHORT k
 Deneyle sabit: 90+ gün ve tam veri, her iki yönü precision kapısına takıyor (rejim karışıklığı). 45 günün ~24'ü 1d-özellik ısınmasına gider → efektif ~20 gün → bölme oransal 70/15/15'e düşer. → [[Pencere-Hassasiyeti]]
 
 ## Threshold seçimi
-Doğrulamada F1 maksimizasyonu, **dinamik precision tabanıyla**: taban = kombonun komisyon+slippage dahil başabaş WR'ı + %5. Yön bu tabanı geçemezse threshold 1.01 → o yön kapalı (bilinçli güvenlik davranışı — "bot sinyal üretmiyor" şikayetinin meşru nedeni olabilir).
+Doğrulamada **beklenen toplam net PnL maksimizasyonu (K-15)**: sinyal sayısı × işlem başına komisyon-dahil EV. Kısıt: **dinamik precision tabanı** = kombonun maliyet-dahil başabaş WR'ı + %5. Yön tabanı geçemezse threshold 1.01 → o yön kapalı (bilinçli güvenlik davranışı — "bot sinyal üretmiyor" şikayetinin meşru nedeni olabilir). Eskiden F1 maksimize ediliyordu — sınıflandırma metriği para ile hizalı değildi.
 
 ## Yeniden eğitim
 - Manuel: `/train` (Telegram/dashboard) → son 45 gün

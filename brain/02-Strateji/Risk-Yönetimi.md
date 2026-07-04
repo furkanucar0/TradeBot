@@ -11,6 +11,7 @@ Hedef: günlük %1-2 istikrarlı getiri, düşük varyans. Kararlılık **R:R'ı
 | Katman | Kural | Not |
 |---|---|---|
 | İşlem başına risk | SL kaybı ≤ kasanın **%0.5'i** | Backtest ve canlı AYNI formül |
+| **Proba ölçeği (K-14)** | İşlemin KENDİ olasılığıyla Kelly: 0.4-1.0 çarpan | p=0.50→0.62× · p≥0.62→1.0× — kalibrasyon kanıtlı |
 | Quarter-Kelly | Son 20 işlem WR'ına göre 0.30-1.0 çarpan | Kanıtsız model **%0.25** ile başlar |
 | Drawdown ölçeği | Zirveden düşüşte boyut %30'a kadar iner | DD×7 formülü |
 | Kaldıraç | **5x** taban; DD %5→4x, %8→3x | Gap/likidasyon koruması |

@@ -20,6 +20,10 @@ Her kararın dayanağıyla birlikte kaydı. Format: **K-# · karar · durum · d
 - **K-10 · Dinamik precision tabanı (başabaş+%5)** · ✅ 03.07 · Sabit 0.40 tabanı dar kombolarda başabaşın altındaydı → zararına aşırı işlem.
 - **K-11 · Trend vetosu güven ölçekli (+0.15 delme)** · ✅ 03-04.07 · Mutlak veto SHORT-only model + yukarı trendde botu kilitliyordu; delen alt kümenin val WR'ı %70-83 → [[2026-07-04-Karşı-Trend-Analizi]].
 - **K-12 · Rapor PnL'i giriş komisyonu dahil** · ✅ 03.07 · Günlük metrik kasayla çelişiyordu (+0.51 görünen gerçekte -0.59).
+- **K-13 · B-1/B-2/B-3 paketi** · ✅ 04.07 · (a) Dinamik eşik ayarı ≥0 — filtreler sadece eler, bonus tabanı 0.50'ye çekemez; (b) otomatik retrain: ≥20 yeni işlem VE ≥12 saat ara (gürültüye eğitim engeli); (c) REST fiyat 5sn→2sn.
+- **K-14 · Proba-ölçekli boyutlandırma (H-1)** · ✅ 04.07 · İşlemin kendi olasılığıyla Kelly: ölçek 0.4-1.0 (p=0.50→0.62×, p≥0.62→1.0×). Canlı+backtest aynı formül. Dayanak: [[2026-07-03-Kalibrasyon-Kanıtı]] monoton.
+- **K-15 · Threshold seçimi val-EV ile (H-2)** · ✅ 04.07 · F1 yerine doğrulamada beklenen toplam net PnL maksimize edilir; precision tabanı kısıt olarak durur. "Ödül mantığı v1"in ikinci yarısı.
+- **K-16 · Günlük Telegram raporu (H-4)** · ✅ 04.07 · UTC gün dönümünde dünün işlem/WR/PnL/kasa özeti otomatik gönderilir.
 
 ## Reddedilenler
 
@@ -30,8 +34,6 @@ Her kararın dayanağıyla birlikte kaydı. Format: **K-# · karar · durum · d
 - **R-5 · Kör özellik kesimi (33→15)** · ❌ (şimdilik) · "Curse of dimensionality" ağaç modeli için yanlış çerçeve; ölü özellik zararsız. Kesim istenirse importance listesi hazır → [[İndikatörler]].
 - **R-6 · Ek komisyon cezası** · ❌ · Zaten %0.10 + funding modelleniyor (önerilen %0.06'dan sert).
 
-## Beklemede (onay bekliyor — 04.07)
+## Beklemede
 
-- **B-1 · Dinamik eşik ayarı ≥ 0** (bonus eşik düşüremesin) · Dayanak: 0.50-0.55 dilimi sınırda zararına; en kötü durumda taban 0.50'ye inebiliyor.
-- **B-2 · Otomatik retrain'e 12 saat asgari ara** · Dayanak: volatil dönemde 20 işlem hızla dolar → gürültüye eğitim riski.
-- **B-3 · REST fiyat periyodu 5sn → 2sn** · Dayanak: gecikme payını bedavaya düşürür.
+- **B-4 · Faz 2 adayları (paper 100 işlem sonrası):** sembol genişletme (H-5), walk-forward (H-6), maker giriş (H-7), kısmi TP (H-8) → [[2026-07-04-Kâr-Marjı-Raporu]]. Ön şart: paper'da 50-100 kapanmış işlem birikmesi ("paper'a sabır" ilkesi).

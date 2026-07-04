@@ -587,8 +587,13 @@ def backtest(
         pred = int(row.get("_pred", 0))
         # Mevcut drawdown %15'i geçtiyse yeni işlem açma (risk yönetimi)
         current_dd = (peak_cap - capital) / peak_cap if peak_cap > 0 else 0.0
-        # Risk bazlı position sizing: her işlemde sermayenin RISK_PER_TRADE'ini riskle
-        risk_usdt = capital * RISK_PER_TRADE          # örn. $100 × 0.5% = $0.5 risk
+        # Risk bazlı position sizing: her işlemde sermayenin RISK_PER_TRADE'ini riskle.
+        # K-14 (H-1): işlem bazlı Kelly — işlemin KENDİ olasılığıyla ölçek (canlı ile aynı)
+        _p = float(row.get("_proba", 0.60))
+        _rr_ratio = tp_pct / sl_pct if sl_pct > 0 else 1.0
+        _kelly_p = max(0.0, (_p * _rr_ratio - (1.0 - _p)) / _rr_ratio) if _rr_ratio > 0 else 0.0
+        p_scale = min(1.0, max(0.4, _kelly_p * 2.5))
+        risk_usdt = capital * RISK_PER_TRADE * p_scale    # örn. $100 × 0.5% × ölçek
         margin = max(5.0, risk_usdt / sl_pct / LEVERAGE)  # min $5 margin
         # Korelasyon koruması: BTC-ETH ~0.9 korele; ikinci eşzamanlı pozisyon
         # (aynı yön) fiilen çift risk taşır → yarım boyut
@@ -789,16 +794,19 @@ def main(run_server: bool = True, days: int = 0) -> None:
     # başabaş WR'ı + %5 tampon. Sabit 0.40 tabanı dar kombolarda başabaşın
     # ALTINDA kalıyordu → zararına aşırı işlem (149 işlem / -9 USDT vakası).
     _cost    = FEE_RATE * 2 + SLIPPAGE_RATE
-    _be      = (best_sl + _cost) / ((best_tp - _cost) + (best_sl + _cost))
+    _net_tp  = best_tp - _cost
+    _net_sl  = best_sl + _cost
+    _be      = (best_sl + _cost) / (_net_tp + _net_sl)
     min_prec = max(MIN_DIRECTION_PREC, _be + 0.05)
     broadcast({"phase": "training",
                "msg": f"Precision tabanı: {min_prec:.3f} (başabaş {_be:.3f} + %5 tampon)",
                "progress": 43})
 
     def _optimize_threshold(y_proba_arr, y_true_arr, progress_base):
-        """F1 maksimizasyonu — precision >= başabaş+tampon şartıyla.
-        En az 10 sinyal şartı; hiç uygun eşik bulunamazsa en düşük geçerli threshold döner."""
-        best_thr, best_f1 = None, -1.0
+        """K-15 (H-2): Eşik, F1 yerine VAL üZERİNDE BEKLENEN TOPLAM NET PnL'i
+        maksimize eder (sinyal sayısı × işlem başına komisyon-dahil EV).
+        Precision tabanı (başabaş+%5) kısıt olarak korunur; en az 10 sinyal şartı."""
+        best_thr, best_ev = None, -1e18
         fallback_thr = 0.20   # hiç uygun bulunamazsa kullanılacak
         for thr in [i / 100 for i in range(20, 70, 2)]:
             yt = (y_proba_arr >= thr).astype(int)
@@ -806,17 +814,18 @@ def main(run_server: bool = True, days: int = 0) -> None:
             if ns < 10:
                 continue          # break yerine continue — daha yüksek threshold'u da dene
             prec = precision_score(y_true_arr, yt, zero_division=0)
-            f1  = f1_score(y_true_arr, yt, zero_division=0)
+            ev_per = prec * _net_tp - (1 - prec) * _net_sl   # işlem başına net EV (notional oranı)
+            total_ev = ev_per * ns                           # dilimdeki beklenen toplam PnL
             broadcast({"phase": "training",
-                       "msg": f"  thr={thr:.2f} n={ns} prec={prec:.3f} f1={f1:.3f}",
+                       "msg": f"  thr={thr:.2f} n={ns} prec={prec:.3f} EV/işlem={ev_per*100:+.3f}% toplam={total_ev*100:+.1f}",
                        "progress": progress_base})
             if best_thr is None:
                 fallback_thr = thr   # sinyal üreten ilk threshold = fallback
-            if prec >= min_prec and f1 > best_f1:
-                best_f1, best_thr = f1, thr
+            if prec >= min_prec and total_ev > best_ev:
+                best_ev, best_thr = total_ev, thr
         chosen = best_thr if best_thr is not None else fallback_thr
         broadcast({"phase": "training",
-                   "msg": f"  → Seçilen threshold={chosen:.2f} (val) F1={best_f1:.4f}",
+                   "msg": f"  → Seçilen threshold={chosen:.2f} (val, toplam EV={best_ev*100:+.1f})",
                    "progress": progress_base})
         return chosen
 

@@ -36,6 +36,9 @@ LOOP_INTERVAL = 30         # saniye (canlı veri çekme aralığı)
 DEMO_START_BALANCE = 100.0 # demo kasa başlangıç bakiyesi
 CANDLE_BUFFER_SIZE = 3000  # 1m mum buffer'ı (50 saat) — 1h MTF için yeterli warmup
 RETRAIN_DAYS = 45          # otomatik yeniden eğitim penceresi (tam veri rejim-bağımlı)
+RETRAIN_MIN_TRADES = 20    # otomatik retrain için asgari yeni kapanan işlem
+RETRAIN_MIN_GAP_S = 12 * 3600  # K-13 (B-2): retrainler arası asgari süre — volatil
+                               # dönemde 20 işlem hızla dolar, gürültüye eğitim engellenir
 SIGNAL_MARGIN = 0.07       # sinyal seçiciliği: proba eşiği bu kadar da aşmalı.
                            # Kalibrasyon kanıtı (2026-07-03, val): SHORT proba>=0.55
                            # dilimi WR %63.7, 0.45-0.50 dilimi %30 (başabaş %40).
@@ -321,7 +324,21 @@ def _calc_dynamic_threshold(base_adj: float, features: Dict[str, float], sym: st
     adx_bonus = -0.03 if adx > 30 else (0.03 if adx < 18 else 0.0)
 
     adj = base_adj + vol_penalty + tf_bonus + adx_bonus
-    return float(np.clip(adj, -0.05, 0.25))
+    # K-13 (B-1): Filtreler sadece ELER, asla kolaylaştırmaz — ayar 0'ın altına
+    # inemez. Kalibrasyona göre 0.50-0.55 dilimi sınırda zararına; bonusların
+    # tabanı oraya çekmesine izin verilmez.
+    return float(np.clip(adj, 0.0, 0.25))
+
+
+def _proba_scale(proba: float, rr: float) -> float:
+    """
+    K-14 (H-1): İşlem bazlı Kelly — işlemin KENDİ olasılığıyla boyut ölçeği.
+    Kalibrasyon kanıtı (2026-07-03): proba dilimleri monoton; %85'lik sinyal
+    ile %55'lik sinyal aynı parayla oynanmamalı. Bant 0.4-1.0: zayıf-geçer
+    sinyal ~yarım boy, güçlü sinyal tam boy. Riski sadece AŞAĞI çeker.
+    """
+    kelly = max(0.0, (proba * rr - (1.0 - proba)) / rr) if rr > 0 else 0.0
+    return float(min(1.0, max(0.4, kelly * 2.5)))
 
 
 def _calc_position_margin(
@@ -330,11 +347,12 @@ def _calc_position_margin(
     demo_trades: List[Dict],
     sl_pct: float,
     tp_pct: float,
+    proba: float = 0.60,
 ) -> tuple:
     """
     Birleşik pozisyon boyutlandırma — backtest ile AYNI hedef:
     SL vurursa kasanın en fazla RISK_PER_TRADE'i (%0.5) gider.
-    Drawdown ve Kelly katmanları riski sadece AŞAĞI çeker, asla yukarı değil.
+    Drawdown, Kelly ve proba katmanları riski sadece AŞAĞI çeker, asla yukarı değil.
     Döndürür: (margin_usdt, effective_leverage)
     """
     # Katman 1: Drawdown Scale — DD %10'a gelince pozisyon %70 küçülür
@@ -361,7 +379,8 @@ def _calc_position_margin(
         eff_leverage = 3
 
     # Hedef risk: notional × sl_pct = balance × risk_pct olacak şekilde marjin
-    risk_pct = RISK_PER_TRADE * dd_scale * k_scale        # maks %0.5
+    p_scale  = _proba_scale(proba, (tp_pct / sl_pct) if sl_pct > 0 else 1.0)
+    risk_pct = RISK_PER_TRADE * dd_scale * k_scale * p_scale   # maks %0.5
     margin   = (balance * risk_pct) / sl_pct / eff_leverage if sl_pct > 0 else balance * 0.05
     margin   = max(5.0, min(balance * 0.25, margin))      # min $5, marjin ≤ kasa %25
 
@@ -395,9 +414,11 @@ async def _run_async(testnet: bool) -> None:
     demo_trades:    List[Dict] = []
     analysis_window: Deque[Dict] = deque(maxlen=50)  # son 50 işlemin analizi
     _retrain_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    _retrain_state = {"count": 0, "ts": time.time()}   # son retrain'deki işlem sayısı + zamanı
     realized_pnl = 0.0     # gün içi gerçekleşen PnL (günlük fren kontrolü için)
     day_start_balance = DEMO_START_BALANCE   # gün başı bakiye — yüzde frenlerin paydası
     daily_paused = False   # kayıp freni / kâr kilidi devredeyse o gün yeni işlem yok
+    day_trades_idx = 0     # günlük rapor için: gün başında demo_trades uzunluğu
 
     _last_prices: Dict[str, float] = {}
 
@@ -471,10 +492,16 @@ async def _run_async(testnet: bool) -> None:
         _raw_to_sym = {s.replace("/", ""): s for s in SYMBOLS}
 
         async def _price_loop():
+            # Bu ağda WS bağlanıp veri GÖNDERMEZ (ISS filtresi) → her ~10 dk
+            # ping-timeout/yeniden-bağlanma döngüsü logu çöple dolduruyordu.
+            # Kural: "kuruldu" mesajı ancak GERÇEKTEN veri akarsa basılır;
+            # hatalar 1. ve her 20.'de bir loglanır; bekleme üstel (3sn→5dk).
+            backoff = 3
+            fail_count = 0
+            data_flowing = False
             while not _stop_flag:
                 try:
                     async with _ws_connect(ws_url, ping_interval=20, ping_timeout=10) as ws:
-                        broadcast({"phase": "server", "msg": "Fiyat WebSocket (kline_1m) kuruldu"})
                         async for raw in ws:
                             if _stop_flag:
                                 return
@@ -482,6 +509,11 @@ async def _run_async(testnet: bool) -> None:
                                 k = json.loads(raw).get("data", {}).get("k", {})
                                 if not k:
                                     continue
+                                if not data_flowing:
+                                    data_flowing = True
+                                    backoff, fail_count = 3, 0
+                                    broadcast({"phase": "server",
+                                               "msg": "Fiyat WebSocket AKTİF — gerçek zamanlı tick akıyor"})
                                 raw_sym = k["s"]   # BTCUSDT
                                 sym = _raw_to_sym.get(raw_sym)
                                 if sym:
@@ -508,13 +540,18 @@ async def _run_async(testnet: bool) -> None:
                                 pass
                 except Exception as e:
                     if not _stop_flag:
-                        broadcast({"phase": "server",
-                                   "msg": f"WS koptu, 3 sn sonra yeniden bağlanıyor: {e}"})
-                        await asyncio.sleep(3)
+                        fail_count += 1
+                        data_flowing = False
+                        if fail_count == 1 or fail_count % 20 == 0:
+                            broadcast({"phase": "server",
+                                       "msg": (f"WS veri akmıyor ({fail_count}. deneme: {e}) — "
+                                               f"REST beslemesi asıl kaynak, {backoff} sn sonra tekrar")})
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 2, 300)   # üstel geri çekilme, tavan 5 dk
 
         async def _rest_price_loop():
             """
-            REST fiyat güvenlik ağı — 5 sn'de bir son mumları çeker.
+            REST fiyat güvenlik ağı — 2 sn'de bir son mumları çeker.
             Bazı ağlarda Binance WS bağlanıyor ama market datası HİÇ akmıyor
             (ISS/bölge filtresi); bot bu durumda fiyatsız kalıp sonsuza dek
             sinyal atlıyordu. WS tick gelirse bu döngü sadece yedek görevi görür.
@@ -548,10 +585,10 @@ async def _run_async(testnet: bool) -> None:
                         if not announced:
                             announced = True
                             broadcast({"phase": "server",
-                                       "msg": "REST fiyat beslemesi aktif (5 sn) — WS yedekli çalışıyor"})
+                                       "msg": "REST fiyat beslemesi aktif (2 sn) — WS yedekli çalışıyor"})
                     except Exception:
                         pass   # geçici ağ hatası — sonraki turda tekrar dene
-                await asyncio.sleep(5)
+                await asyncio.sleep(2)   # K-13 (B-3): SL/TP tespiti için gecikme payı azaltıldı
 
         price_task = asyncio.create_task(_price_loop())
         rest_task  = asyncio.create_task(_rest_price_loop())
@@ -666,9 +703,30 @@ async def _run_async(testnet: bool) -> None:
     loss_day = time.strftime("%Y-%m-%d", time.gmtime())   # günlük kayıp limiti UTC gün bazlı
     try:
         while not _stop_flag:
-            # ── Günlük frenler: yeni UTC gününde sıfırla ─────────────────────
+            # ── Günlük frenler: yeni UTC gününde sıfırla + günlük rapor ──────
             today = time.strftime("%Y-%m-%d", time.gmtime())
             if today != loss_day:
+                # K-16 (H-4): dünün özet raporu — Telegram'a her gün otomatik
+                day_trades = demo_trades[day_trades_idx:]
+                if day_trades:
+                    wins   = sum(1 for t in day_trades if t["result"] == "TP")
+                    day_wr = wins / len(day_trades)
+                    ret    = realized_pnl / day_start_balance * 100 if day_start_balance > 0 else 0.0
+                    emoji  = "📈" if realized_pnl >= 0 else "📉"
+                    tg.send_async(
+                        f"{emoji} <b>Günlük Rapor | {loss_day}</b>\n"
+                        f"İşlem: {len(day_trades)} ({wins} TP / {len(day_trades)-wins} diğer)\n"
+                        f"Gün WR: {day_wr:.0%}\n"
+                        f"Gün PnL: <b>{realized_pnl:+.2f} USDT ({ret:+.2f}%)</b>\n"
+                        f"Kasa: <b>{demo_balance:.2f} USDT</b>"
+                        + ("\n⏸ Gün frenle kapandı" if daily_paused else "")
+                    )
+                else:
+                    tg.send_async(
+                        f"😴 <b>Günlük Rapor | {loss_day}</b>\n"
+                        f"Bugün hiç işlem açılmadı.\n"
+                        f"Kasa: <b>{demo_balance:.2f} USDT</b>"
+                    )
                 loss_day = today
                 if realized_pnl != 0.0 or daily_paused:
                     broadcast({"phase": "server",
@@ -676,6 +734,7 @@ async def _run_async(testnet: bool) -> None:
                 realized_pnl = 0.0
                 day_start_balance = demo_balance
                 daily_paused = False
+                day_trades_idx = len(demo_trades)
 
             # ── Paper: Açık pozisyon SL/TP kontrolü ─────────────────────────
             if paper_mode:
@@ -742,9 +801,12 @@ async def _run_async(testnet: bool) -> None:
                                 "avg_proba":  round(avg_proba, 3),
                             })
 
-                            # ── Her 20 işlemde otomatik yeniden eğitim ───────
+                            # ── Otomatik yeniden eğitim: ≥20 yeni işlem VE ≥12 saat ara ──
                             total_closed = len(demo_trades)
-                            if total_closed > 0 and total_closed % 20 == 0:
+                            if (total_closed - _retrain_state["count"] >= RETRAIN_MIN_TRADES
+                                    and time.time() - _retrain_state["ts"] >= RETRAIN_MIN_GAP_S):
+                                _retrain_state["count"] = total_closed
+                                _retrain_state["ts"] = time.time()
                                 broadcast({"phase": "server",
                                            "msg": f"{total_closed} işlem tamamlandı — model güncelleniyor..."})
                                 def _retrain():
@@ -903,8 +965,11 @@ async def _run_async(testnet: bool) -> None:
 
                     # ── Order Book filtresi ───────────────────────────────────
                     ob_imbalance = await asyncio.to_thread(_fetch_order_book_imbalance, sym)
-                    if ob_imbalance < -0.15: pred_long  = 0   # bids zayıf → LONG iyi değil
-                    if ob_imbalance >  0.15: pred_short = 0   # asks zayıf → SHORT iyi değil
+                    ob_blocked = False
+                    if pred_long == 1 and ob_imbalance < -0.15:   # bids zayıf → LONG iyi değil
+                        pred_long = 0; ob_blocked = True
+                    if pred_short == 1 and ob_imbalance > 0.15:   # asks zayıf → SHORT iyi değil
+                        pred_short = 0; ob_blocked = True
 
                     # ── Her iki yön aynı anda ateşlenirse güçlü olanı al ─────
                     if pred_long == 1 and pred_short == 1:
@@ -931,9 +996,11 @@ async def _run_async(testnet: bool) -> None:
                         "proba_short": round(proba_short, 4),
                     })
 
-                    if any_signal and ob_imbalance and abs(ob_imbalance) > 0.15:
+                    if ob_blocked:
+                        # Yalnızca GERÇEKTEN bloklanınca logla (eski hali OB lehte
+                        # olsa bile basılıyor, işlem açılırken "geçildi" diyordu)
                         broadcast({"phase": "server",
-                                   "msg": f"{sym} sinyal var ama emir defteri olumsuz (OB={ob_imbalance:.2f}) — gecildi"})
+                                   "msg": f"{sym} sinyal emir defteri tarafından bloklandı (OB={ob_imbalance:.2f})"})
 
                     # ── LONG aç ───────────────────────────────────────────────
                     if pred_long == 1 and sym not in open_syms and len(open_syms) < MAX_POSITIONS:
@@ -955,9 +1022,10 @@ async def _run_async(testnet: bool) -> None:
                     if True:   # pozisyon açma bloğu (indentasyonu koru)
 
                         if paper_mode:
-                            # Dinamik pozisyon boyutu + kaldıraç
+                            # Dinamik pozisyon boyutu + kaldıraç (proba-ölçekli, K-14)
                             margin, eff_leverage = _calc_position_margin(
-                                demo_balance, peak_balance, demo_trades, sl_pct, tp_pct
+                                demo_balance, peak_balance, demo_trades, sl_pct, tp_pct,
+                                proba=proba,
                             )
                             # Korelasyon koruması: BTC-ETH ~0.9 korele — aynı yönde
                             # ikinci pozisyon fiilen çift risk → yarım boyut
@@ -1024,7 +1092,8 @@ async def _run_async(testnet: bool) -> None:
                                            "msg": f"Yetersiz bakiye ({usdt_free:.2f} USDT) — işlem atlandı"})
                                 continue
                             margin, eff_leverage = _calc_position_margin(
-                                usdt_free, usdt_free, [], sl_pct, tp_pct
+                                usdt_free, usdt_free, [], sl_pct, tp_pct,
+                                proba=proba,
                             )
                             notional = margin * eff_leverage
                             order_id = await asyncio.to_thread(

@@ -15,8 +15,7 @@ efektif eşik = model eşiği (val'de optimize)
              + SIGNAL_MARGIN (0.07, kalibrasyon kanıtlı)
              + dinamik ayar (volatilite/trend/ADX/F&G)
 ```
-Dinamik ayar bileşenleri: 1h ATR oranının kendi 24s medyanına göre artışı (ceza), trend hizalama 0-3 (±0.038), 1h ADX (±0.03), Korku&Açgözlülük <20 veya >80 (+0.05).
-→ Bekleyen karar: ayarın 0 altına inmesinin (bonus) yasaklanması — [[Kararlar-Kaydı]]
+Dinamik ayar bileşenleri: 1h ATR oranının kendi 24s medyanına göre artışı (ceza), trend hizalama, 1h ADX, Korku&Açgözlülük. **Ayar 0'ın altına inemez (K-13):** filtreler sadece eler, bonus tabanı asla düşüremez.
 
 ## 3. Çift yönlü tahmin
 LONG ve SHORT modelleri ayrı proba üretir; eşiği geçen(ler) aday olur. İkisi birden geçerse güçlü olan alınır.
@@ -27,11 +26,12 @@ LONG ve SHORT modelleri ayrı proba üretir; eşiği geçen(ler) aday olur. İki
 3. **Emir defteri:** bid/ask dengesizliği sinyal aleyhine ±0.15'i aşarsa iptal
 
 ## 5. Boyutlandırma ve açılış
-[[Risk-Yönetimi]] formülüyle marjin hesaplanır (risk tavanı %0.5), aynı yönde ikinci pozisyon yarım boy, işlem DB'ye yazılır, Telegram bildirimi gider.
+[[Risk-Yönetimi]] formülüyle marjin hesaplanır: risk tavanı %0.5 × **işlemin kendi olasılık ölçeği (K-14)** × Kelly × DD ölçeği. Aynı yönde ikinci pozisyon yarım boy. İşlem DB'ye yazılır, Telegram bildirimi gider.
 
 ## 6. Yönetim
-- SL/TP kontrolü cari mumun high/low'u ile her saniye
+- SL/TP kontrolü cari mumun high/low'u ile her saniye (REST beslemesi 2 sn — K-13)
 - Günlük -%1.5 kayıp freni / +%2 kâr kilidi → o gün yeni işlem yok
-- Her 20 kapanan işlemde otomatik yeniden eğitim (kayan 45 gün)
+- Otomatik yeniden eğitim: **≥20 yeni kapanan işlem VE ≥12 saat ara** (K-13), kayan 45 gün
+- UTC gün dönümünde günlük Telegram raporu (K-16)
 
 İlgili: [[Model-ve-Eğitim]], [[Risk-Yönetimi]]
