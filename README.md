@@ -65,3 +65,26 @@ Frontend tarayıcı ekranında canlı durum güncellemelerini ve web socket taba
 - Bu ilk aşamada bot, gerçek emir yerine paper trading simülasyonuyle çalışacak.
 - Model dosyası `backend/model.bin` olarak saklanır.
 - API anahtarları `.env` içinde tutulmalıdır.
+
+## VPS Dağıtımı (Docker)
+
+4 servis (backend, fetcher, telegram, frontend) Docker ile tek komutla ayağa kalkar. Detaylı mimari: `brain/01-Mimari/Dağıtım-Docker.md`.
+
+**Sunucuda ilk kurulum:**
+
+```powershell
+git clone <repo-url> Bot
+cd Bot
+copy .env.docker.example .env.docker
+notepad .env.docker   # BINANCE_*, TELEGRAM_*, API_KEY (rastgele üret), CORS_EXTRA_ORIGINS, VITE_API_BASE_URL doldur
+docker compose --env-file .env.docker build
+docker compose --env-file .env.docker up -d
+```
+
+**Veriyi taşıma** (mevcut makineden, ilk kurulumda bir kez): `backend/bot.sqlite`, `backend/model.bin`, `backend/reports/` klasörünü sunucudaki aynı yollara kopyalayın (repo klonlandıktan, container'lar başlamadan önce).
+
+**Güvenlik — mutlaka yapın:** API_KEY sadece rastgele tarayan botlara karşı bir eşiktir, gerçek erişim kontrolü değildir. Sunucunun güvenlik duvarında (Windows Firewall / bulut sağlayıcının güvenlik grubu) **8000 ve 5173 portlarını yalnızca kendi IP adresinize açın** — tüm internete açık bırakmayın.
+
+**Durum kontrolü:** `docker compose ps` · **Loglar:** `docker compose logs -f backend` · **Güncelleme:** `git pull` → `docker compose up -d --build` · **Durdurma:** `docker compose down`
+
+Yerel Windows geliştirme akışı (Task Scheduler, `install-services.ps1`) değişmedi — iki model paralel var olabilir.

@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { type Trade } from '../api'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+import { apiHeaders, API_BASE } from '../apiConfig'
 
 type Mode = 'all' | 'paper' | 'live'
 
@@ -40,7 +39,7 @@ export default function TradeHistory() {
     if (until) params.set('until', String(toUnixSec(until)))
 
     setLoading(true)
-    fetch(`${API_BASE}/trades?${params}`)
+    fetch(`${API_BASE}/trades?${params}`, { headers: apiHeaders() })
       .then(r => {
         if (!r.ok) throw new Error(`Sunucu hatası: ${r.status}`)
         return r.json()
@@ -88,7 +87,7 @@ export default function TradeHistory() {
     setDeleting(true)
     fetch(`${API_BASE}/trades`, {
       method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...apiHeaders() },
       body: JSON.stringify([...selected]),
     })
       .then(r => r.ok ? r.json() : Promise.reject(r.status))

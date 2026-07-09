@@ -7,6 +7,7 @@ tanımsız sabit kullanıyordu).
 
 Karar dayanakları için: brain/04-Kararlar/Kararlar-Kaydı.md
 """
+import os
 
 # ── İşlem evreni ──────────────────────────────────────────────────────────────
 SYMBOLS = ["BTC/USDT", "ETH/USDT"]
@@ -69,6 +70,27 @@ MFE_LOW_RATIO     = 0.3    # SL yedi ve MFE < TP'nin %30'u → "yanlış yön"
 # Retrain'de yeni model (challenger), mevcut şampiyonu ORTAK doğrulama
 # diliminde yenemezse model.bin DEĞİŞMEZ (pencere hassasiyetine karşı sigorta)
 CHALLENGER_MIN_IMPROVE = 0.05   # şampiyon EV'sinin en az %5 üstü gerekir
+
+# ── API Erişim Kontrolü (K-24 — Docker/VPS taşıması) ─────────────────────────
+# Yerelde (127.0.0.1) API kimlik doğrulaması gerekmiyordu — ağ izolasyonu
+# yeterliydi. VPS'e taşınca /panic, /bot/start, /train gibi uçlar internete
+# açılıyor; paylaşılan anahtar zorunlu. Boşsa (yerel geliştirme) kontrol atlanır.
+API_KEY = os.getenv("API_KEY", "").strip()
+API_HOST = os.getenv("API_HOST", "127.0.0.1")
+API_PORT = int(os.getenv("API_PORT", "8000"))
+# Virgülle ayrılmış ek CORS origin'leri (VPS'teki frontend adresi için)
+CORS_EXTRA_ORIGINS = [o.strip() for o in os.getenv("CORS_EXTRA_ORIGINS", "").split(",") if o.strip()]
+
+# ── Google girişi (K-26) ──────────────────────────────────────────────────────
+# Tarayıcı kullanıcıları için ikinci kimlik doğrulama yolu — API_KEY'i
+# DEĞİŞTİRMEZ, ona ek olarak çalışır (Telegram bot statik API_KEY kullanmaya
+# devam eder). GOOGLE_CLIENT_ID boşsa Google girişi tamamen devre dışıdır.
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+ALLOWED_EMAILS = {e.strip().lower() for e in os.getenv("ALLOWED_EMAILS", "").split(",") if e.strip()}
+SESSION_SECRET = os.getenv("SESSION_SECRET", "").strip()
+if not SESSION_SECRET and GOOGLE_CLIENT_ID:
+    import secrets as _secrets
+    SESSION_SECRET = _secrets.token_hex(32)   # ephemeral: restart = herkes yeniden giriş yapar
 
 # ── Mainnet Geçiş Protokolü (FAZ 7 — K-23) ───────────────────────────────────
 # "Paper'a sabır" ilkesinin resmileşmesi: TÜM koşullar sağlanmadan gerçek para

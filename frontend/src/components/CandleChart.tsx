@@ -14,7 +14,7 @@ import {
   type Time,
 } from 'lightweight-charts'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+import { apiHeaders, API_BASE } from '../apiConfig'
 
 interface Props {
   symbol: 'BTC' | 'ETH'
@@ -85,7 +85,7 @@ export default function CandleChart({ symbol, markers = [], latestCandle, startT
       const url = startTs > 0
         ? `${API_BASE}/candles/${symbol}?since=${startTs}&limit=500`
         : `${API_BASE}/candles/${symbol}?limit=120`
-      fetch(url)
+      fetch(url, { headers: apiHeaders() })
         .then(r => r.json())
         .then((data: any[]) => {
           if (!data.length) return

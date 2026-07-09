@@ -18,6 +18,8 @@ tags: [mimari]
 | Konfig | `backend/config.py` | **TEK ayar kaynağı** (K-17) — tüm sabitler; mükerrer tanım yasak | — |
 | Sağlık | `backend/health.py` | 0-100 Health Score (K-18) — 15 sn'de bir yayın, /health, Telegram /health | — |
 | Risk Duvarı | `backend/risk_gate.py` | TEK veto noktası (K-19): tüm işlem-öncesi kontroller + panik kilidi (panic.lock) + sağlık duraklatması (<40 dur / ≥55 devam) | — |
+| Mainnet Kapısı | `backend/mainnet_check.py` | 8 maddelik geçiş kontrol listesi (K-23) — GET /mainnet-check, Telegram /canli+/canli_onay | — |
+| Dağıtım | `docker-compose.yml` | VPS Docker orkestrasyonu (K-24) — backend/fetcher/telegram/frontend, detay: [[Dağıtım-Docker]] | — |
 | Veritabanı | `backend/bot.sqlite` | 3 tablo: historical_market_data, trades, model_runs | — |
 
 ## Veri Akışı

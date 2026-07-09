@@ -7,6 +7,7 @@ __pycache__/
 *.sqlite-shm
 *.sqlite-wal
 .env
+.env.docker
 .venv/
 
 # Çalışma zamanı artefaktları
@@ -15,6 +16,7 @@ backend/model.bin
 backend/reports/
 backend/zips/*.zip
 backend/logs/
+backend/panic.lock
 
 # Node
 node_modules/

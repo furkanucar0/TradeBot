@@ -29,8 +29,15 @@ _HERE     = Path(__file__).resolve().parent
 _ROOT     = _HERE.parent
 _FRONTEND = _ROOT / "frontend"
 _ENV_PATH = _ROOT / ".env"
-_API_URL  = "http://localhost:8000"
+_API_URL  = os.getenv("API_BASE_URL", "http://localhost:8000")
+_API_KEY  = os.getenv("API_KEY", "").strip()
+_API_HEADERS = {"X-API-Key": _API_KEY} if _API_KEY else {}
 _PYTHON   = sys.executable
+# K-24: Docker'da her bileşen kendi container'ında, kendi restart politikasıyla
+# çalışır — burada subprocess/schtasks ile "başlat/durdur" anlamsız (ve
+# telegram container'ının İÇİNDE başıboş bir süreç doğurabilir). Bu modda
+# bileşen komutları docker compose'a yönlendiren bilgi mesajı döner.
+_DOCKER_MODE = os.getenv("DOCKER_MODE", "").strip().lower() in ("1", "true", "yes")
 
 _CREATE_NEW = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
 
@@ -177,7 +184,7 @@ def _stop_proc(name: str) -> bool:
 
 def _api_ready() -> bool:
     try:
-        _req.get(f"{_API_URL}/status", timeout=3)
+        _req.get(f"{_API_URL}/status", headers=_API_HEADERS, timeout=3)
         return True
     except Exception:
         return False
@@ -186,13 +193,19 @@ def _api_ready() -> bool:
 def _api(method: str, path: str, **kwargs):
     try:
         fn = getattr(_req, method)
-        return fn(f"{_API_URL}{path}", timeout=10, **kwargs).json()
+        headers = {**_API_HEADERS, **kwargs.pop("headers", {})}
+        return fn(f"{_API_URL}{path}", headers=headers, timeout=10, **kwargs).json()
     except Exception as e:
         return {"error": str(e)}
 
 
 # ── Bileşen başlatıcılar ──────────────────────────────────────────────────────
 def cmd_backend() -> str:
+    if _DOCKER_MODE:
+        if _api_ready():
+            return "✅ Backend container'ı çalışıyor (Docker tarafından yönetiliyor)."
+        return ("❌ Backend API yanıt vermiyor. Sunucuda kontrol et:\n"
+                "<code>docker compose ps</code> / <code>docker compose logs backend</code>")
     if _alive("backend"):
         return "⚠️ Backend zaten çalışıyor."
     _send("⏳ Backend başlatılıyor...")
@@ -206,6 +219,8 @@ def cmd_backend() -> str:
 
 
 def cmd_fetcher() -> str:
+    if _DOCKER_MODE:
+        return "✅ Fetcher container'ı Docker tarafından yönetiliyor (kendi restart politikasıyla)."
     if _alive("fetcher"):
         return "⚠️ Mum fetcher zaten çalışıyor."
     if _start_component("fetcher", [_PYTHON, "live_fetcher.py"], _HERE):
@@ -214,6 +229,8 @@ def cmd_fetcher() -> str:
 
 
 def cmd_frontend() -> str:
+    if _DOCKER_MODE:
+        return "✅ Frontend container'ı Docker tarafından yönetiliyor."
     if _alive("frontend"):
         return "⚠️ Frontend zaten çalışıyor."
     if _task_exists("frontend"):
@@ -250,13 +267,16 @@ def cmd_paper() -> str:
 
 
 def cmd_train() -> str:
-    if not _alive("backend"):
-        _send("⏳ Backend başlatılıyor...")
-        result = cmd_backend()
-        if "❌" in result:
-            return result
-    if not _alive("fetcher"):
-        cmd_fetcher()
+    if not _DOCKER_MODE:
+        if not _alive("backend"):
+            _send("⏳ Backend başlatılıyor...")
+            result = cmd_backend()
+            if "❌" in result:
+                return result
+        if not _alive("fetcher"):
+            cmd_fetcher()
+    elif not _api_ready():
+        return "❌ Backend API yanıt vermiyor — sunucuda <code>docker compose ps</code> kontrol et."
     r = _api("post", "/train")
     if "error" in r:
         return f"❌ Eğitim başlatılamadı: {r['error']}"
@@ -281,23 +301,30 @@ def cmd_stop_bot() -> str:
 
 
 def cmd_stop_frontend() -> str:
+    if _DOCKER_MODE:
+        return ("ℹ️ Docker'da tekil durdurma yok — "
+                "<code>docker compose stop frontend</code> kullan.")
     if _stop_component("frontend"):
         return "⏹ <b>Frontend durduruldu.</b>"
     return "⚠️ Frontend zaten durmuş."
 
 
 def cmd_stop_all() -> str:
+    if _DOCKER_MODE:
+        return ("ℹ️ Docker'da /durdur çalışmaz (container'lar restart politikasıyla "
+                "kendini ayağa kaldırır). Botu durdurmak için /durdur_bot yeterli; "
+                "tüm sistemi kapatmak için sunucuda <code>docker compose down</code>.")
     _send("⏳ Her şey durduruluyor...")
     if _api_ready():
         # 1. Önce trading botunu düzgün durdur
         try:
-            _req.post(f"{_API_URL}/bot/stop", timeout=5)
+            _req.post(f"{_API_URL}/bot/stop", headers=_API_HEADERS, timeout=5)
             time.sleep(0.5)
         except Exception:
             pass
         # 2. Backend'e shutdown komutu gönder (dışarıdan başlatılmış olsa bile durur)
         try:
-            _req.post(f"{_API_URL}/shutdown", timeout=3)
+            _req.post(f"{_API_URL}/shutdown", headers=_API_HEADERS, timeout=3)
             time.sleep(1)
         except Exception:
             pass
@@ -314,6 +341,65 @@ def cmd_stop_all() -> str:
         "Backend · Fetcher · Frontend · Bot\n"
         "Yeniden başlatmak için /baslat yaz."
     )
+
+
+# ── Mainnet Protokolü (K-23 / FAZ 7): iki adımlı onay ────────────────────────
+_MAINNET_CONFIRM_S = 300
+_pending_live = {"ts": 0.0}   # /canli sonrası onay penceresi
+
+
+def _render_mainnet_check(mc: dict) -> str:
+    lines = ["📋 <b>Mainnet Geçiş Kontrol Listesi (K-23)</b>"]
+    for c in mc.get("checks", []):
+        icon = "✅" if c["ok"] else "❌"
+        lines.append(f"{icon} {c['name']}: <b>{c['value']}</b> (hedef {c['target']})")
+    st = mc.get("stats", {})
+    lines.append("")
+    lines.append(f"Kanıt: {st.get('trades', 0)} işlem / {st.get('days', 0)} gün | "
+                 f"PnL {st.get('total_pnl', 0):+.2f} USDT")
+    lines.append("🟢 <b>PROTOKOL GEÇİLDİ</b>" if mc.get("ready")
+                 else "🔴 <b>Henüz hazır değil — paper kanıtı birikmeye devam ediyor.</b>")
+    return "\n".join(lines)
+
+
+def cmd_mainnet_check() -> str:
+    if not _api_ready():
+        return "❌ Backend çalışmıyor."
+    mc = _api("get", "/mainnet-check")
+    if "error" in mc:
+        return f"❌ Kontrol alınamadı: {mc['error']}"
+    return _render_mainnet_check(mc)
+
+
+def cmd_live_start() -> str:
+    """Adım 1: kontrol listesi geçilirse onay penceresi açılır."""
+    if not _api_ready():
+        return "❌ Backend çalışmıyor."
+    mc = _api("get", "/mainnet-check")
+    if "error" in mc:
+        return f"❌ Kontrol alınamadı: {mc['error']}"
+    if not mc.get("ready"):
+        return _render_mainnet_check(mc) + "\n\n⛔ Canlı açılış REDDEDİLDİ."
+    _pending_live["ts"] = time.time()
+    return (
+        _render_mainnet_check(mc)
+        + "\n\n⚠️ <b>GERÇEK PARA açılacak.</b>\n"
+        f"Onaylamak için {_MAINNET_CONFIRM_S // 60} dk içinde /canli_onay yaz."
+    )
+
+
+def cmd_live_confirm() -> str:
+    """Adım 2: onay penceresi içindeyse mainnet botu başlat."""
+    if time.time() - _pending_live["ts"] > _MAINNET_CONFIRM_S:
+        _pending_live["ts"] = 0.0
+        return "⌛ Onay penceresi kapalı — önce /canli yaz."
+    _pending_live["ts"] = 0.0
+    r = _api("post", "/bot/start?testnet=false")
+    if "error" in r:
+        return f"❌ Canlı başlatılamadı: {r['error']}"
+    if r.get("detail"):
+        return f"⛔ Reddedildi: {r['detail']}"
+    return "🟢 <b>CANLI TRADE BAŞLADI — gerçek para modunda.</b>\nAcil durdurma: /panik"
 
 
 def cmd_panic() -> str:
@@ -449,6 +535,10 @@ _HELP = (
     "/durdur_front — Sadece frontend'i durdur\n"
     "/panik        — 🚨 ACİL: pozisyonları kapat + kilitle\n"
     "/panik_kaldir — Panik kilidini kaldır\n\n"
+    "<b>── Mainnet (K-23) ──</b>\n"
+    "/mainnet_check — Geçiş kontrol listesi\n"
+    "/canli         — Canlı açılış (protokol + onay ister)\n"
+    "/canli_onay    — Canlı açılışı onayla (5 dk pencere)\n\n"
     "<b>── Bilgi ──</b>\n"
     "/status       — Anlık durum\n"
     "/health       — Sağlık skoru (0-100)\n"
@@ -508,6 +598,15 @@ def _handle(text: str):
     elif cmd == "/panik_kaldir":
         _send(cmd_panic_clear())
 
+    elif cmd == "/mainnet_check":
+        _send(cmd_mainnet_check())
+
+    elif cmd == "/canli":
+        _send(cmd_live_start())
+
+    elif cmd == "/canli_onay":
+        _send(cmd_live_confirm())
+
     else:
         _send(f"❓ Bilinmeyen komut: <code>{cmd}</code>\n/help yaz.")
 
@@ -555,11 +654,11 @@ def main():
             # /shutdown API'si varsa önce düzgün durdur
             if _api_ready():
                 try:
-                    _req.post(f"{_API_URL}/bot/stop", timeout=3)
+                    _req.post(f"{_API_URL}/bot/stop", headers=_API_HEADERS, timeout=3)
                 except Exception:
                     pass
                 try:
-                    _req.post(f"{_API_URL}/shutdown", timeout=3)
+                    _req.post(f"{_API_URL}/shutdown", headers=_API_HEADERS, timeout=3)
                     time.sleep(1)
                 except Exception:
                     pass

@@ -7,8 +7,8 @@ import {
   clearPanic, fetchBacktest, fetchStatus, panicBot, startBot, stopBot, triggerTrain,
   type BacktestSummary, type BotStatus,
 } from '../api'
+import { apiHeaders, API_BASE, wsUrl } from '../apiConfig'
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 const WS_HOSTS = [
   API_BASE.replace(/^http/, 'ws'),
   'ws://127.0.0.1:8000',
@@ -234,7 +234,7 @@ export default function LiveDashboard() {
       if (!alive) return
       const host = WS_HOSTS[hostIdx % WS_HOSTS.length]
       hostIdx++
-      ws = new WebSocket(host + '/ws')
+      ws = new WebSocket(wsUrl(host, '/ws'))
       ws.onopen = () => { if (alive) pushLog('system', `WS bağlandı: ${host}`) }
       ws.onmessage = e => { try { if (alive) handleEvent(JSON.parse(e.data)) } catch { } }
       ws.onerror = () => { ws?.close() }
@@ -721,7 +721,7 @@ export default function LiveDashboard() {
                         </span>
                         <button
                           onClick={() =>
-                            fetch(`${API_BASE}/positions/${encodeURIComponent(pos.symbol)}/close`, { method: 'POST' })
+                            fetch(`${API_BASE}/positions/${encodeURIComponent(pos.symbol)}/close`, { method: 'POST', headers: apiHeaders() })
                           }
                           className="px-2 py-0.5 rounded text-xs font-medium bg-slate-700 hover:bg-red-800/70 text-slate-300 hover:text-red-200 transition"
                         >

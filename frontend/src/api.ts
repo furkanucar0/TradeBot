@@ -1,8 +1,22 @@
 import axios from 'axios'
+import { apiHeaders, API_BASE, clearSession } from './apiConfig'
 
-const BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-
-export const api = axios.create({ baseURL: BASE })
+export const api = axios.create({ baseURL: API_BASE })
+api.interceptors.request.use(config => {
+  Object.assign(config.headers, apiHeaders())
+  return config
+})
+// Oturum süresi dolmuşsa (K-26: 24s) temizle ve giriş ekranına dön
+api.interceptors.response.use(
+  r => r,
+  err => {
+    if (err?.response?.status === 401) {
+      clearSession()
+      window.location.reload()
+    }
+    return Promise.reject(err)
+  },
+)
 
 export interface BotStatus {
   is_running: boolean

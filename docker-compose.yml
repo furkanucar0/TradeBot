@@ -1,0 +1,67 @@
+# VPS dağıtımı (K-24). 4 servis eski Windows Task Scheduler görevlerinin
+# (TradingBotBackend/Fetcher/Telegram/Frontend) doğrudan karşılığıdır.
+#
+# Backend/Fetcher/Telegram TÜM repo kökünü bind-mount eder (.:/workspace) —
+# böylece kod içindeki TÜM göreli yol varsayımları (../.env, ../brain/...,
+# bot.sqlite, model.bin) yerelde çalıştığı gibi DEĞİŞİKLİKSİZ çalışır; imaj
+# sadece Python + kütüphaneleri taşır. Kod güncellemesi = git pull + restart,
+# imaj yeniden build gerekmez.
+#
+# Kurulum: .env.docker.example'ı .env.docker'a kopyala, doldur, sonra:
+#   docker compose --env-file .env.docker build
+#   docker compose --env-file .env.docker up -d
+
+services:
+  backend:
+    build: ./backend
+    working_dir: /workspace/backend
+    command: python -u api.py
+    volumes:
+      - .:/workspace
+    env_file: .env.docker
+    environment:
+      API_HOST: 0.0.0.0
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  fetcher:
+    build: ./backend
+    working_dir: /workspace/backend
+    command: python -u live_fetcher.py
+    volumes:
+      - .:/workspace
+    env_file: .env.docker
+    restart: unless-stopped
+
+  telegram:
+    build: ./backend
+    working_dir: /workspace/backend
+    command: python -u telegram_bot.py
+    volumes:
+      - .:/workspace
+    env_file: .env.docker
+    environment:
+      DOCKER_MODE: "true"
+      API_BASE_URL: http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+        VITE_API_KEY: ${API_KEY}
+    ports:
+      - "5173:80"
+    restart: unless-stopped

@@ -1,0 +1,16 @@
+# Sırlar ve veri imaja gömülmez — sadece runtime'da bind-mount ile gelir
+.env
+.env.*
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+model.bin
+panic.lock
+events.log
+logs/
+reports/
+zips/*.zip
+
+__pycache__/
+*.pyc
+.venv/

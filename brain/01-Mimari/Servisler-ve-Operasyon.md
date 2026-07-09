@@ -4,6 +4,8 @@ tags: [mimari, operasyon]
 
 # Servisler ve Operasyon
 
+> **Bu sayfa yerel Windows geliştirme ortamını anlatır.** VPS/üretim dağıtımı Docker'a taşındı (05.07, K-24) → [[Dağıtım-Docker]]. İki model paralel var olabilir: yerelde geliştir/test et, VPS'te çalıştır.
+
 ## Windows Görev Zamanlayıcısı Hizmetleri
 
 | Görev | Çalıştırdığı | Log |

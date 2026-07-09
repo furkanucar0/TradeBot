@@ -13,3 +13,5 @@ ta
 matplotlib
 python-dotenv
 websockets
+google-auth
+PyJWT

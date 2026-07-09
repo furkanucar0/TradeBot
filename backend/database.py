@@ -102,7 +102,13 @@ class Database:
     async def connect(self) -> None:
         self.conn = await aiosqlite.connect(str(self.db_path))
         self.conn.row_factory = aiosqlite.Row
-        await self.conn.execute("PRAGMA journal_mode = WAL;")
+        # WAL modu mmap/paylaşımlı-bellek kilitleme ister; Docker'ın Windows
+        # bind-mount köprüsünde (WSL2/Hyper-V dosya paylaşımı) bu "disk I/O
+        # error" ile çöker (K-24'te keşfedildi). Docker dağıtımında
+        # SQLITE_JOURNAL_MODE=DELETE ile geçilir; yerel Windows'ta varsayılan
+        # WAL değişmez.
+        journal_mode = os.getenv("SQLITE_JOURNAL_MODE", "WAL")
+        await self.conn.execute(f"PRAGMA journal_mode = {journal_mode};")
         await self.conn.execute("PRAGMA synchronous = NORMAL;")
         for stmt in _CREATE_TABLES.strip().split(";"):
             stmt = stmt.strip()

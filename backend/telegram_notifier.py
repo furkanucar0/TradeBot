@@ -20,20 +20,23 @@ _MIN_INTERVAL = 1.0       # saniye
 
 
 def _load_env() -> None:
+    """.env dosyasından okur (varsa); Docker'da bu dosya hiç yok, sadece
+    env_file ile enjekte edilen os.environ var — dosya yoksa erken dönüp
+    os.getenv kontrolünü ATLAMAK ciddi bir bug'dı (K-26 sonrası fark edildi):
+    token/chat_id hiç yüklenmiyor, bildirimler sessizce hiç gönderilmiyordu."""
     global _TOKEN, _CHAT_ID
-    if not _ENV_PATH.exists():
-        return
-    for line in _ENV_PATH.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line.startswith("#") or "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        k, v = k.strip(), v.strip().strip('"').strip("'")
-        if k == "TELEGRAM_TOKEN" and v:
-            _TOKEN = v
-        elif k == "TELEGRAM_CHAT_ID" and v:
-            _CHAT_ID = v
-    # os.environ de kontrol et (override)
+    if _ENV_PATH.exists():
+        for line in _ENV_PATH.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            if k == "TELEGRAM_TOKEN" and v:
+                _TOKEN = v
+            elif k == "TELEGRAM_CHAT_ID" and v:
+                _CHAT_ID = v
+    # os.environ de kontrol et (override) — dosya olmasa bile ÇALIŞMALI
     _TOKEN   = os.getenv("TELEGRAM_TOKEN",   _TOKEN)
     _CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", _CHAT_ID)
 

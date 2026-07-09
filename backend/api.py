@@ -13,9 +13,14 @@ from typing import Any, Dict, List, Optional
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
+import google_auth
+from config import (
+    ALLOWED_EMAILS, API_HOST, API_KEY, API_PORT, CORS_EXTRA_ORIGINS, GOOGLE_CLIENT_ID,
+)
 from database import Database, get_database_path
 
 REPORTS_DIR = Path(__file__).resolve().parent / "reports"
@@ -48,11 +53,54 @@ def _push_event(ev: Dict[str, Any]) -> None:
                 pass
 
 
+def _static_key_ok(supplied: Optional[str]) -> bool:
+    return bool(API_KEY) and supplied == API_KEY
+
+
+def _session_ok(supplied: Optional[str]) -> bool:
+    return bool(supplied) and google_auth.verify_session_token(supplied) is not None
+
+
+def _credential_ok(supplied: Optional[str]) -> bool:
+    """K-24 (statik API_KEY) VEYA K-26 (Google oturum JWT'si) — ikisinden
+    biri geçerliyse erişim verilir. Telegram bot ilkini, tarayıcı ikincisini
+    kullanır."""
+    return _static_key_ok(supplied) or _session_ok(supplied)
+
+
+class APIKeyMiddleware(BaseHTTPMiddleware):
+    """Kimlik doğrulama, iki mekanizmadan biri: X-API-Key header (statik,
+    K-24) veya Authorization: Bearer <oturum JWT> (Google girişi, K-26).
+    Hiçbiri yapılandırılmamışsa (API_KEY ve GOOGLE_CLIENT_ID boş — yerel
+    geliştirme) kontrol tamamen atlanır. CORS preflight (OPTIONS) bu
+    middleware'den ÖNCE CORSMiddleware tarafından yanıtlanır — buraya hiç
+    düşmez (bkz. add_middleware sırası)."""
+
+    PUBLIC_PATHS = ("/", "/health", "/auth/google", "/auth/config")
+
+    async def dispatch(self, request: Request, call_next):
+        auth_required = bool(API_KEY) or bool(GOOGLE_CLIENT_ID)
+        if not auth_required or request.url.path in self.PUBLIC_PATHS:
+            return await call_next(request)
+        api_key_header = request.headers.get("x-api-key")
+        bearer = request.headers.get("authorization", "")
+        bearer_token = bearer[7:].strip() if bearer.lower().startswith("bearer ") else None
+        if _credential_ok(api_key_header) or _credential_ok(bearer_token):
+            return await call_next(request)
+        return JSONResponse({"detail": "Kimlik doğrulama gerekli (X-API-Key veya Google girişi)"},
+                             status_code=401)
+
+
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="Futures Scalping Bot API", version="1.0")
+# Sıra önemli: Starlette'te SON eklenen middleware EN DIŞTA çalışır. Auth önce
+# eklenir (iç katman) ki CORS preflight (OPTIONS) dışta CORSMiddleware
+# tarafından karşılansın ve hiç auth kontrolüne düşmesin.
+app.add_middleware(APIKeyMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "http://localhost:3000"],
+    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173", "http://localhost:3000",
+                   *CORS_EXTRA_ORIGINS],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,6 +113,13 @@ app.mount("/reports", StaticFiles(directory=str(REPORTS_DIR)), name="reports")
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
+    # K-24/K-26: tarayıcı WebSocket API'si özel header taşıyamaz → anahtar
+    # (statik API_KEY veya Google oturum JWT'si) query param ile gelir
+    # (ws://host/ws?key=...)
+    auth_required = bool(API_KEY) or bool(GOOGLE_CLIENT_ID)
+    if auth_required and not _credential_ok(ws.query_params.get("key")):
+        await ws.close(code=4401)
+        return
     await ws.accept()
     q: asyncio.Queue = asyncio.Queue()
     with _clients_lock:
@@ -272,6 +327,31 @@ async def get_health():
     return h
 
 
+# ── Google Girişi (K-26) ──────────────────────────────────────────────────────
+@app.get("/auth/config")
+async def auth_config():
+    """Frontend'in Google butonunu gösterip göstermeyeceğine karar vermesi
+    için genel (sır olmayan) bilgi. Client ID zaten tarayıcıya gömülecek
+    türden bir değerdir."""
+    return {"google_enabled": bool(GOOGLE_CLIENT_ID), "google_client_id": GOOGLE_CLIENT_ID}
+
+
+@app.post("/auth/google")
+async def auth_google(request: Request):
+    """Tarayıcıdan gelen Google ID token'ını doğrular, ALLOWED_EMAILS'te
+    olan hesaplar için kısa ömürlü bir oturum JWT'si döner."""
+    body = await request.json()
+    credential = body.get("credential", "")
+    try:
+        email = google_auth.verify_google_credential(credential)
+    except google_auth.AuthError as e:
+        print(f"[auth/google] REDDEDİLDİ: {e}", flush=True)
+        raise HTTPException(403, str(e))
+    print(f"[auth/google] kabul edildi: {email}", flush=True)
+    token = google_auth.issue_session_token(email)
+    return {"session_token": token, "email": email}
+
+
 # ── Panik / Kill Switch (K-19 / FAZ 3) ────────────────────────────────────────
 @app.post("/panic")
 async def panic():
@@ -306,6 +386,14 @@ async def panic_clear():
     risk_gate.panic_clear()
     _push_event({"phase": "server", "msg": "✅ Panik kilidi kaldırıldı — bot elle başlatılabilir"})
     return {"status": "cleared"}
+
+
+# ── Mainnet Protokolü (K-23 / FAZ 7) ─────────────────────────────────────────
+@app.get("/mainnet-check")
+async def mainnet_readiness():
+    """8 maddelik mainnet geçiş kontrol listesi (paper kanıtına dayalı)."""
+    import mainnet_check
+    return mainnet_check.evaluate()
 
 
 # ── Karar Geçmişi (K-20 / FAZ 4) ─────────────────────────────────────────────
@@ -427,6 +515,16 @@ async def bot_start(background_tasks: BackgroundTasks, testnet: bool = True):
             "Backtest kriterleri karşılanmadan mainnet trade başlatılamaz "
             "(dinamik WR hedefi + R:R≥2.0 + pozitif EV + Sharpe≥0.5 + MaxDD≤%25 gerekli)",
         )
+    if not testnet:
+        # K-23 (FAZ 7): paper kanıtı kontrol listesinden geçmeden gerçek para yok
+        import mainnet_check
+        mc = mainnet_check.evaluate()
+        if not mc["ready"]:
+            fails = "; ".join(
+                f"{c['name']}: {c['value']} (hedef {c['target']})"
+                for c in mc["checks"] if not c["ok"]
+            )
+            raise HTTPException(403, f"Mainnet protokolü (K-23) karşılanmadı → {fails}")
     if not MODEL_PATH.exists():
         raise HTTPException(404, "Model bulunamadı. Önce /train çalıştırın.")
 
@@ -469,4 +567,7 @@ async def shutdown():
 
 # ── Entry Point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    uvicorn.run("api:app", host="127.0.0.1", port=8000, reload=False, log_level="info")
+    if not API_KEY and API_HOST != "127.0.0.1":
+        print("UYARI: API_KEY boş ve API_HOST 127.0.0.1 değil — API anahtarsız "
+              "dışarıya açılıyor. Docker/VPS dağıtımında .env'e API_KEY ekleyin.")
+    uvicorn.run("api:app", host=API_HOST, port=API_PORT, reload=False, log_level="info")
