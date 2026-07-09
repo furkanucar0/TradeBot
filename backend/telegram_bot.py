@@ -521,28 +521,32 @@ def _send(text: str):
 
 # ── Komut yönlendirici ────────────────────────────────────────────────────────
 _HELP = (
-    "🤖 <b>Komut Listesi</b>\n\n"
-    "<b>── Başlatma ──</b>\n"
-    "/baslat       — Her şeyi başlat\n"
-    "/backend      — Sadece backend\n"
-    "/fetcher      — Sadece mum fetcher\n"
-    "/frontend     — Sadece arayüz\n"
-    "/paper        — Sadece paper trade botu\n"
-    "/train        — Model eğitimi\n\n"
-    "<b>── Durdurma ──</b>\n"
-    "/durdur       — Her şeyi durdur\n"
-    "/durdur_bot   — Sadece paper trade botunu durdur\n"
-    "/durdur_front — Sadece frontend'i durdur\n"
-    "/panik        — 🚨 ACİL: pozisyonları kapat + kilitle\n"
-    "/panik_kaldir — Panik kilidini kaldır\n\n"
-    "<b>── Mainnet (K-23) ──</b>\n"
-    "/mainnet_check — Geçiş kontrol listesi\n"
-    "/canli         — Canlı açılış (protokol + onay ister)\n"
-    "/canli_onay    — Canlı açılışı onayla (5 dk pencere)\n\n"
-    "<b>── Bilgi ──</b>\n"
-    "/status       — Anlık durum\n"
-    "/health       — Sağlık skoru (0-100)\n"
-    "/help         — Bu mesaj"
+    "🤖 <b>TradeBot Komut Merkezi</b>\n"
+    "BTC/USDT + ETH/USDT · USDT-M Vadeli\n\n"
+
+    "<b>━━━ BOT KONTROLÜ ━━━</b>\n"
+    "/paper — Paper (sanal kasa) trade botunu başlatır. Model eğitilmiş olmalı; zaten çalışıyorsa uyarır.\n"
+    "/durdur_bot — Botu durdurur. Veri toplama (fetcher) ve API çalışmaya devam eder — sadece işlem açma/kapama döngüsü durur.\n"
+    "/status — Anlık özet: bot çalışıyor mu, açık pozisyonlar (giriş fiyatı + anlık kâr/zarar), son eğitimin Win Rate/R:R değeri, son 5 kapanan işlemin toplam PnL'i.\n"
+    "/health — 0-100 sağlık skoru + 5 bileşenin çubuk grafiği: düşüş (drawdown), ardışık zarar-kes sayısı, günlük kâr/zarar, kazanma oranı trendi, veri tazeliği. Skor 40'ın altına inerse bot otomatik olarak yeni işlem açmayı durdurur (55'e çıkınca kendiliğinden devam eder).\n\n"
+
+    "<b>━━━ EĞİTİM ━━━</b>\n"
+    "/train — Son 45 günlük veriyle LONG ve SHORT modellerini sıfırdan eğitir (~1-3 dk sürer). Yeni model (Aday), doğrulama diliminde mevcut modeli (Şampiyon) en az %5 farkla yenmezse devreye ALINMAZ — otomatik ve kanıta dayalı bir kıyas var, sonuç size buradan bildirilir. Bittiğinde Win Rate/Sharpe/MaxDD özeti gelir.\n\n"
+
+    "<b>━━━ 🚨 ACİL DURUM ━━━</b>\n"
+    "/panik — Tüm açık pozisyonları anında piyasa fiyatından kapatır, botu durdurur, bir kilit koyar. Kilit kalkmadan bot HİÇBİR ŞEKİLDE yeniden başlatılamaz (yanlışlıkla tekrar açılmasını önler).\n"
+    "/panik_kaldir — Panik kilidini kaldırır. Bot otomatik başlamaz — ardından /paper yazmanız gerekir.\n\n"
+
+    "<b>━━━ 💰 MAİNNET (GERÇEK PARA) ━━━</b>\n"
+    "/mainnet_check — Gerçek para geçişi için 8 maddelik kontrol listesini gösterir: kaç madde geçilmiş, hangileri eksik (örn. yetersiz işlem sayısı, düşük güven aralığı). Şu an hiçbiri geçilmeden gerçek para açılamaz.\n"
+    "/canli — Kontrol listesi 8/8 geçildiyse 5 dakikalık bir onay penceresi açar. Geçilmediyse hangi maddelerin eksik olduğunu söyleyip reddeder.\n"
+    "/canli_onay — Onay penceresi açıkken yazılırsa botu GERÇEK PARAYLA başlatır. Pencere kapandıysa önce /canli tekrar gerekir.\n\n"
+
+    "<b>━━━ 🐳 SUNUCU SERVİSLERİ ━━━</b>\n"
+    "/backend /fetcher /frontend — Bu bileşenler artık Docker container'ı olarak 7/24 çalışır ve kendiliğinden yeniden başlar; bu komutlar sadece o an ayakta olup olmadığını bildirir, başlatma/durdurma yapmaz.\n"
+    "/durdur /durdur_front — Docker'da tekil servis durdurma bu komutlarla yapılmaz (yanlışlıkla tüm sistemi durdurmayı önlemek için); ne yapmanız gerektiğini söyleyen bir yönlendirme mesajı döner (sunucuda <code>docker compose</code> komutları).\n\n"
+
+    "/help — Bu listeyi tekrar gösterir"
 )
 
 
