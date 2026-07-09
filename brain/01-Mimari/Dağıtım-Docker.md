@@ -55,10 +55,30 @@ Yerelde (`127.0.0.1`) API'nin kimlik doğrulaması YOKTU. VPS'e taşınca `/pani
 
 `telegram_bot.py`'nin `/backend /fetcher /frontend /durdur` komutları `DOCKER_MODE=true` ile `docker compose` yönlendirmesi yapan bilgi mesajı döner (Docker'da her servis kendi container'ında yaşar, `schtasks`/`subprocess` anlamsız). **Trading komutları** (`/paper /train /panik /health /mainnet_check /canli`) değişmedi — hepsi backend API'yi HTTP ile çağırır, dağıtım modelinden bağımsız çalışır.
 
+## Otomatik dağıtım: Jenkins (K-28)
+
+`/opt/bot` artık gerçek bir `git clone` (önceden SFTP arşivinden çıkarılmış dosyalardı). Jenkins, ayrı bir Docker container olarak çalışıp `/opt/bot`'u dakikada bir günceller:
+
+```
+her dakika (cron) → git reset --hard origin/main → docker compose build → docker compose up -d → docker inspect ile sağlık kontrolü
+```
+
+**Mimari — Docker-outside-of-Docker:** Jenkins container'ının kendisi `bot-jenkins:lts` imajından (resmi `jenkins/jenkins:lts-jdk17` + statik Docker CLI + compose plugin ikilisi eklenmiş) çalışır; host'un `/var/run/docker.sock`'ı ve `/opt/bot`'u AYNI YOLDA (`/opt/bot:/opt/bot`) bağlar — bu sayede Jenkins içinden çalıştırılan `docker compose` komutları host'un daemon'ına konuşur ve `docker-compose.yml`'deki bind-mount'lar (`.:/workspace`) doğru host yollarını çözer (path'ler container içinde ve dışında birebir aynı olduğu için).
+
+**Tetikleme — webhook değil, cron polling:** GitHub push webhook'u Jenkins'in internete açılmasını gerektirirdi; Jenkins `docker.sock`'a sahip olduğu için (host'ta kök-eşdeğeri yetki) bu ciddi bir risk — kullanıcıya soruldu, **kapalı kalması** tercih edildi. Jenkins `127.0.0.1:8080`'e bağlı, dışarıdan tamamen erişilemez (doğrulandı). Bedel: en fazla ~1 dakikalık gecikme; `git reset --hard` + `docker compose up -d` idempotent olduğu için değişiklik yoksa adımlar no-op'a yakın.
+
+**Güvenlik sınıflandırıcısının 3 müdahalesi (K-28'de detaylı):**
+1. Kurulum sihirbazı bitmeden `docker.sock` + açık port kombinasyonu → önce localhost-only + headless güvenlik kurulumu
+2. Admin şifresinin `docker run -e` ile geçirilmesi (docker inspect'te görünür) → dosya bağlama (`/run/secrets/...`)
+3. Webhook için genel erişime açma → kullanıcı onayıyla cron polling'e geçildi, port hiç açılmadı
+
+**Bilinen Jenkins tuhaflığı:** Declarative pipeline'daki `triggers {}` bloğu, job'ın İLK build'i çalışana kadar Jenkins'in zamanlayıcısına kayıtlı DEĞİL — yeni bir job oluşturulduğunda bir kez manuel tetiklemek şart, ondan sonra otomatik tetikleme devreye girer.
+
 ## Dosyalar
 - `backend/Dockerfile`, `.dockerignore`, `google_auth.py` — backend/fetcher/telegram ortak imajı + Google doğrulama
 - `frontend/Dockerfile`, `nginx.conf`, `.dockerignore`, `src/components/AuthGate.tsx`, `src/apiConfig.ts` — SPA build + giriş ekranı
 - `docker-compose.yml` — 4 servis orkestrasyon
 - `.env.docker.example` → `.env.docker` (sunucuda, git'e girmez) — tüm sırlar + Docker-özel config tek yerde
+- `/opt/jenkins-image/` (sunucuda, repo dışı) — Jenkins imajı Dockerfile'ı + headless güvenlik init script'i + pipeline config.xml
 
-İlgili: [[Kararlar-Kaydı]] K-24, K-25, K-26, [[Sistem-Mimarisi]], [[Servisler-ve-Operasyon]]
+İlgili: [[Kararlar-Kaydı]] K-24, K-25, K-26, K-28, [[Sistem-Mimarisi]], [[Servisler-ve-Operasyon]]
