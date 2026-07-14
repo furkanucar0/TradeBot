@@ -91,6 +91,14 @@ CREATE TABLE IF NOT EXISTS model_runs (
     test_rows INTEGER,
     notes TEXT
 );
+
+CREATE TABLE IF NOT EXISTS market_metrics (
+    ts INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    funding_rate REAL,
+    open_interest REAL,
+    PRIMARY KEY (ts, symbol)
+);
 """
 
 
@@ -295,3 +303,70 @@ class Database:
         cursor = await self.conn.execute("SELECT * FROM model_runs ORDER BY trained_at DESC LIMIT 1")
         row = await cursor.fetchone()
         return dict(row) if row else None
+
+    # ── Piyasa metrikleri: funding rate + open interest ─────────────────────
+    async def insert_market_metric(
+        self, ts: int, symbol: str,
+        funding_rate: Optional[float] = None,
+        open_interest: Optional[float] = None,
+    ) -> None:
+        """Tek bir (ts, symbol) metrik satırını upsert eder."""
+        await self.insert_market_metrics(
+            [{"ts": ts, "symbol": symbol,
+              "funding_rate": funding_rate, "open_interest": open_interest}]
+        )
+
+    async def insert_market_metrics(self, metrics: Iterable[Dict[str, Any]]) -> int:
+        """
+        Toplu upsert (INSERT OR REPLACE). Funding (8h) ve OI (5m) farklı
+        zaman damgalarında gelir; ancak funding zamanları (00/08/16 UTC) 5m
+        sınırına da denk düştüğü için AYNI (ts, symbol) çakışabilir. INSERT OR
+        REPLACE satırın tamamını değiştirdiğinden, batch içinde aynı anahtarı
+        önce BİRLEŞTİRİP (null olmayan değeri koruyarak) tek satıra indiriyoruz
+        — böylece funding satırı OI satırının değerini (veya tersi) silmez.
+        """
+        merged: Dict[tuple, Dict[str, Any]] = {}
+        for m in metrics:
+            ts = int(m["ts"])
+            sym = str(m["symbol"])
+            key = (ts, sym)
+            fr = m.get("funding_rate")
+            oi = m.get("open_interest")
+            cur = merged.setdefault(key, {"funding_rate": None, "open_interest": None})
+            if fr is not None:
+                cur["funding_rate"] = float(fr)
+            if oi is not None:
+                cur["open_interest"] = float(oi)
+        if not merged:
+            return 0
+        assert self.conn is not None
+        rows = [
+            (ts, sym, v["funding_rate"], v["open_interest"])
+            for (ts, sym), v in merged.items()
+        ]
+        await self.conn.executemany(
+            "INSERT OR REPLACE INTO market_metrics (ts, symbol, funding_rate, open_interest) "
+            "VALUES (?, ?, ?, ?)",
+            rows,
+        )
+        await self.conn.commit()
+        return len(rows)
+
+    async def fetch_market_metrics(
+        self, symbol: str, since_ms: int = 0, until_ms: int = 0,
+    ) -> List[Dict[str, Any]]:
+        """Bir sembol için zaman aralığındaki metrikleri artan ts sırasıyla döner."""
+        assert self.conn is not None
+        conditions = ["symbol = ?"]
+        params: list = [symbol]
+        if since_ms > 0:
+            conditions.append("ts >= ?"); params.append(since_ms)
+        if until_ms > 0:
+            conditions.append("ts <= ?"); params.append(until_ms)
+        where = "WHERE " + " AND ".join(conditions)
+        cursor = await self.conn.execute(
+            f"SELECT ts, symbol, funding_rate, open_interest FROM market_metrics {where} ORDER BY ts ASC",
+            params,
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]

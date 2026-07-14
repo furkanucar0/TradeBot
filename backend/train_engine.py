@@ -51,8 +51,8 @@ except Exception:
 
 from config import (
     CHALLENGER_MIN_IMPROVE, FEE_RATE, FUNDING_PER_8H, LEVERAGE, MAX_POSITIONS,
-    MAX_RR, MIN_DIRECTION_PREC, PURGE_HOURS, RISK_PER_TRADE, RR_TARGET,
-    SL_GRID, SLIPPAGE_RATE, TEST_DAYS, TP_GRID, VAL_DAYS, WIN_RATE_TARGET,
+    MAX_RR, MIN_DIRECTION_PREC, PURGE_HOURS, RECENCY_WEIGHT_MIN, RISK_PER_TRADE,
+    RR_TARGET, SL_GRID, SLIPPAGE_RATE, TEST_DAYS, TP_GRID, VAL_DAYS, WIN_RATE_TARGET,
 )
 from database import get_database_path
 from features import FEATURE_COLS, add_features
@@ -202,6 +202,27 @@ def load_data(days: int = 0) -> pd.DataFrame:
     if days > 0 and not df.empty:
         min_ts = int(df["timestamp"].max()) - days * 86_400_000
         df = df[df["timestamp"] >= min_ts].reset_index(drop=True)
+    return df
+
+
+def load_market_metrics() -> Optional[pd.DataFrame]:
+    """
+    market_metrics tablosundaki funding + OI geçmişini yükler (features.add_features
+    metrics_df parametresine geçilir). Tablo yoksa/boşsa None döner — bu durumda
+    funding_rate/oi_change_1h 0.0 dolgu ile geçer (satır kaybı olmaz)."""
+    db_path = get_database_path()
+    try:
+        conn = sqlite3.connect(str(db_path))
+        df = pd.read_sql_query(
+            "SELECT ts, symbol, funding_rate, open_interest FROM market_metrics ORDER BY symbol, ts",
+            conn,
+        )
+        conn.close()
+    except Exception:
+        return None
+    if df.empty:
+        return None
+    df["ts"] = df["ts"].astype("int64")
     return df
 
 
@@ -400,9 +421,24 @@ def train_model(
     n_neg = len(y_train) - n_pos
     raw_scale = (n_neg / n_pos) if n_pos > 0 else 1.0
     scale = min(raw_scale, 5.0)
+
+    # K-29: recency sample weighting — pencerenin en eski satırı RECENCY_WEIGHT_MIN,
+    # en yeni satırı 1.0 ağırlık alır (arası zaman-doğrusal). Amaç: 45 günlük
+    # pencereyi kısaltmadan eski rejimlerin etkisini azaltıp adaptasyonu hızlandırmak.
+    # eval_set (val) AĞIRLIKSIZ kalır — early stopping + tüm eşik/metrik seçimi
+    # tarafsız doğrulamada yapılmaya devam eder (bkz. train_engine.main).
+    ts_train = df_train["timestamp"].astype("int64").values
+    ts_min, ts_max = (ts_train.min(), ts_train.max()) if len(ts_train) else (0, 0)
+    if ts_max > ts_min:
+        sample_weight = RECENCY_WEIGHT_MIN + (1 - RECENCY_WEIGHT_MIN) * (ts_train - ts_min) / (ts_max - ts_min)
+    else:
+        sample_weight = np.ones(len(ts_train), dtype=np.float64)   # tek an / tek satır → hepsi 1.0
+
     broadcast({
         "phase": "training",
-        "msg": f"{direction}: train={len(y_train)} val={len(y_val)} test={len(y_test)} | pos={n_pos}({n_pos/max(len(y_train),1):.1%}) | scale={scale:.1f}",
+        "msg": (f"{direction}: train={len(y_train)} val={len(y_val)} test={len(y_test)} | "
+                f"pos={n_pos}({n_pos/max(len(y_train),1):.1%}) | scale={scale:.1f} | "
+                f"recency weight {sample_weight.min():.2f}→{sample_weight.max():.2f}"),
         "progress": 46,
     })
 
@@ -426,6 +462,7 @@ def train_model(
     )
     lgbm.fit(
         X_train, y_train,
+        sample_weight=sample_weight,
         eval_set=[(X_val, y_val)],
         callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(-1)],
     )
@@ -446,7 +483,7 @@ def train_model(
                 early_stopping_rounds=50,
                 verbosity=0,
             )
-            xgb.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+            xgb.fit(X_train, y_train, sample_weight=sample_weight, eval_set=[(X_val, y_val)], verbose=False)
             xgb_f1 = f1_score(y_val, xgb.predict(X_val), zero_division=0)
             if xgb_f1 > lgbm_f1:
                 model = xgb
@@ -719,6 +756,17 @@ def main(run_server: bool = True, days: int = 0,
         start_event_server()
         time.sleep(0.8)
 
+    # ── Funding + OI geçmişini backfill et (best-effort) ─────────────────────
+    # Ağ hatası eğitimi DURDURMAZ; veri gelmezse funding_rate/oi_change_1h
+    # 0.0 dolgu ile devam eder (K-2 nötr dolgu). Kendi event loop'unu açar —
+    # main() senkron çağrılır (retrain thread'i / CLI), running loop yoktur.
+    try:
+        import live_fetcher
+        n_mm = asyncio.run(live_fetcher.backfill_market_metrics(days=days or None))
+        broadcast({"phase": "data", "msg": f"Funding/OI backfill: {n_mm} satır yazıldı"})
+    except Exception as e:
+        broadcast({"phase": "data", "msg": f"Funding/OI backfill atlandı (ağ/veri): {e}"})
+
     broadcast({"phase": "data", "msg": "Veriler SQLite'dan yükleniyor...", "progress": 1})
     df = load_data(days=days)
     if df.empty:
@@ -729,7 +777,10 @@ def main(run_server: bool = True, days: int = 0,
     broadcast({"phase": "data", "msg": f"{len(df)} satır yüklendi | Semboller: {symbols}", "progress": 5})
 
     broadcast({"phase": "features", "msg": "Teknik indikatörler hesaplanıyor...", "progress": 7})
-    df_feat = add_features(df)
+    metrics_df = load_market_metrics()   # funding + OI geçmişi (yoksa None → 0.0 dolgu)
+    df_feat = add_features(df, metrics_df=metrics_df)
+    # NOT: funding_rate/oi_change_1h 0.0 ile dolar (NaN olmaz) → aşağıdaki dropna
+    # bu iki kolon yüzünden satır SİLMEZ (K-2 nötr dolgu; OI geçmişi ~30 gün sınırlı).
     df_feat = df_feat.dropna(subset=FEATURE_COLS).copy()
     broadcast({"phase": "features", "msg": f"İndikatörler tamam: {len(df_feat)} temiz satır", "progress": 10})
     if df_feat.empty:

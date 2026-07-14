@@ -2,7 +2,7 @@
 tags: [strateji, özellikler]
 ---
 
-# İndikatörler (33 Özellik)
+# İndikatörler (35 Özellik)
 
 Tek kaynak: `backend/features.py` — eğitim ve canlı aynı kodu kullanır.
 
@@ -13,6 +13,7 @@ Tek kaynak: `backend/features.py` — eğitim ve canlı aynı kodu kullanır.
 - **1h MTF (6):** RSI, MACD hist, EMA9×21 kesişimi, BB pozisyon, ADX, 1h/1m ATR oranı — hep bir önceki KAPANMIŞ bardan
 - **1d MTF (3):** RSI, EMA20 eğimi, BB pozisyon — bir önceki kapanmış günden
 - **Hizalama (1):** tf_alignment (0-3)
+- **Piyasa metrikleri (2 — K-29, 13.07):** funding_rate (o andan önceki son bilinen funding oranı, 8h döngü) + oi_change_1h (open interest'in ~1h önceki as-of değerine göre % değişimi). Kaynak: `market_metrics` tablosu (live_fetcher 5 dk'da bir toplar; eğitim öncesi Binance'ten backfill — funding geçmişi tam, OI ~30 günle sınırlı). merge_asof backward → lookahead yok; eşleşme yoksa 0.0 nötr dolgu → satır kaybı yok.
 
 ## 🔑 Importance bulgusu (2026-07-04, SHORT modeli, gain)
 

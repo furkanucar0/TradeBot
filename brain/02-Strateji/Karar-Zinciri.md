@@ -7,7 +7,7 @@ tags: [strateji]
 Her 30 saniyede, sembol başına:
 
 ## 1. Veri hazırlığı
-3000 mumluk 1m buffer (REST init + WS/REST akış) + 60 günlük 1d barlar → [[İndikatörler|33 özellik]]. Herhangi biri NaN ise **sinyal yok** (nötr varsayılanla işlem açılmaz).
+3000 mumluk 1m buffer (REST init + WS/REST akış) + 60 günlük 1d barlar + funding/OI rolling buffer (5 dk'da bir, K-29) → [[İndikatörler|35 özellik]]. Herhangi biri NaN ise **sinyal yok** (nötr varsayılanla işlem açılmaz; funding/OI eksikse 0.0 nötr dolgu — bloklamaz).
 
 ## 2. Efektif eşik
 ```
@@ -31,7 +31,7 @@ LONG ve SHORT modelleri ayrı proba üretir; eşiği geçen(ler) aday olur. İki
 ## 6. Yönetim
 - SL/TP kontrolü cari mumun high/low'u ile her saniye (REST beslemesi 2 sn — K-13)
 - Günlük -%1.5 kayıp freni / +%2 kâr kilidi → o gün yeni işlem yok
-- Otomatik yeniden eğitim: **≥20 yeni kapanan işlem VE ≥12 saat ara** (K-13), kayan 45 gün
+- Otomatik yeniden eğitim: **≥20 yeni kapanan işlem VE ≥12 saat ara** (K-13) VEYA **model ≥7 gün eski** (K-29 yaş tetiği — yönsüz piyasada bayatlama önlemi), kayan 45 gün
 - UTC gün dönümünde günlük Telegram raporu (K-16)
 
 İlgili: [[Model-ve-Eğitim]], [[Risk-Yönetimi]]

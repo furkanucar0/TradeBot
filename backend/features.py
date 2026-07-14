@@ -41,10 +41,13 @@ FEATURE_COLS = [
     "d1_rsi", "d1_ema_slope", "d1_bb_pos",
     # ── Trend Hizalama (1) ───────────────────────────────────────────────────
     "tf_alignment",
+    # ── Piyasa metrikleri (2) — funding rate + open interest değişimi ─────────
+    "funding_rate", "oi_change_1h",
 ]
 
 
-def add_features(df: pd.DataFrame, d1_override: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+def add_features(df: pd.DataFrame, d1_override: Optional[pd.DataFrame] = None,
+                 metrics_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """
     OHLCV DataFrame'ine FEATURE_COLS sütunlarını ekler.
 
@@ -54,6 +57,14 @@ def add_features(df: pd.DataFrame, d1_override: Optional[pd.DataFrame] = None) -
                   21 günden kısa olduğu için). Sadece tek sembollü df ile
                   kullanılmalıdır. Son barı henüz kapanmamış olabilir; shift(1)
                   sayesinde her zaman bir önceki TAMAMLANMIŞ gün kullanılır.
+    metrics_df  : funding rate + open interest geçmişi (kolonlar: ts, symbol,
+                  funding_rate, open_interest; ts = Unix ms, artan sıralı).
+                  Her 1m muma merge_asof(direction='backward') ile o andan
+                  ÖNCEKİ son bilinen değer eşlenir (K-2: lookahead YASAK —
+                  gelecekteki metrik geçmiş muma sızmaz). Verilmezse veya
+                  eşleşme yoksa funding_rate/oi_change_1h = 0.0 doldurulur
+                  (satır kaybı YASAK; OI geçmişi Binance'te ~30 günle sınırlı
+                  olduğundan nötr dolgu, ağaç modeli için zararsızdır).
     """
     if not TA_AVAILABLE:
         raise RuntimeError("'ta' kütüphanesi gerekli: pip install ta")
@@ -215,22 +226,85 @@ def add_features(df: pd.DataFrame, d1_override: Optional[pd.DataFrame] = None) -
 
         # DatetimeIndex'i geri al
         g.index = orig_idx
+
+        # ── Funding Rate & Open Interest (K-2: merge_asof backward, sızıntı yok) ──
+        # Varsayılan nötr dolgu: metrics_df yoksa VEYA as-of eşleşme bulunmazsa
+        # her iki kolon da 0.0 kalır → dropna bu kolonlar yüzünden satır SİLMEZ.
+        g["funding_rate"] = 0.0
+        g["oi_change_1h"] = 0.0
+        if metrics_df is not None and len(metrics_df) > 0:
+            msym = metrics_df[metrics_df["symbol"] == sym]
+            if len(msym) > 0:
+                msym = msym.sort_values("ts")
+                gts = g["timestamp"].astype("int64").values
+                # Pozisyon takibi: merge_asof girişi ts'e göre sıralı olmalı;
+                # sonucu orijinal satır sırasına __pos ile geri yerleştiririz.
+                left = pd.DataFrame(
+                    {"__pos": np.arange(len(g)), "ts": gts}
+                ).sort_values("ts")
+
+                # Funding: o andan önceki son bilinen funding oranı
+                mf = msym[["ts", "funding_rate"]].dropna(subset=["funding_rate"])
+                if len(mf) > 0:
+                    mf = mf.copy()
+                    mf["ts"] = mf["ts"].astype("int64")
+                    fmerged = pd.merge_asof(left, mf, on="ts", direction="backward")
+                    fr = np.zeros(len(g))
+                    fr[fmerged["__pos"].values] = fmerged["funding_rate"].fillna(0.0).values
+                    g["funding_rate"] = fr
+
+                # Open interest: şimdiki as-of değeri ile ~1h önceki as-of değeri
+                mo = msym[["ts", "open_interest"]].dropna(subset=["open_interest"])
+                if len(mo) > 0:
+                    mo = mo.copy()
+                    mo["ts"] = mo["ts"].astype("int64")
+                    now_m = pd.merge_asof(left, mo, on="ts", direction="backward")
+                    oi_now = np.full(len(g), np.nan)
+                    oi_now[now_m["__pos"].values] = now_m["open_interest"].values
+
+                    left_1h = pd.DataFrame(
+                        {"__pos": np.arange(len(g)), "ts": gts - 3_600_000}
+                    ).sort_values("ts")
+                    mo_1h = mo.rename(columns={"open_interest": "oi_1h"})
+                    prev_m = pd.merge_asof(left_1h, mo_1h, on="ts", direction="backward")
+                    oi_1h = np.full(len(g), np.nan)
+                    oi_1h[prev_m["__pos"].values] = prev_m["oi_1h"].values
+
+                    valid = (~np.isnan(oi_now)) & (~np.isnan(oi_1h)) & (oi_1h > 0)
+                    change = np.zeros(len(g))
+                    change[valid] = (oi_now[valid] - oi_1h[valid]) / oi_1h[valid]
+                    g["oi_change_1h"] = change
+
         results.append(g)
 
     return pd.concat(results).reset_index(drop=True)
 
 
-def latest_features(df: pd.DataFrame, d1_df: Optional[pd.DataFrame] = None) -> Optional[dict]:
+def latest_features(df: pd.DataFrame, d1_df: Optional[pd.DataFrame] = None,
+                    metrics_df: Optional[pd.DataFrame] = None) -> Optional[dict]:
     """
     Canlı mod: 1m buffer'ın son mumu için özellik sözlüğü döner.
     Herhangi bir özellik NaN ise None döner (eksik veriyle sinyal üretme).
+
+    metrics_df : canlı funding+OI buffer'ı (kolonlar: ts, funding_rate,
+                 open_interest). Tek sembollü canlı akış olduğu için symbol
+                 kolonu buffer'da olmayabilir — burada df'in sembolüne
+                 hizalanır. funding_rate/oi_change_1h NaN OLMAZ (0.0 dolgu),
+                 bu yüzden metrik eksikliği None dönüşüne yol açmaz.
     """
     if len(df) < 60:
         return None
     work = df.copy()
+    sym_val = "LIVE"
     if "symbol" not in work.columns:
-        work["symbol"] = "LIVE"
-    feat = add_features(work, d1_override=d1_df)
+        work["symbol"] = sym_val
+    else:
+        sym_val = work["symbol"].iloc[-1]
+    mdf = None
+    if metrics_df is not None and len(metrics_df) > 0:
+        mdf = metrics_df.copy()
+        mdf["symbol"] = sym_val   # tek sembollü canlı: tüm metrikler bu sembole ait
+    feat = add_features(work, d1_override=d1_df, metrics_df=mdf)
     row = feat.iloc[-1]
     out = {}
     for c in FEATURE_COLS:

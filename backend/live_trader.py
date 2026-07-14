@@ -21,8 +21,9 @@ import requests as _req
 from config import (
     CANDLE_BUFFER_SIZE, DAILY_LOSS_LIMIT_PCT, DAILY_PROFIT_LOCK_PCT,
     DECISIONS_KEEP_DAYS, DEMO_START_BALANCE, FEE_RATE, LEVERAGE, LOOP_INTERVAL,
-    MAE_NEAR_SL_RATIO, MAX_POSITIONS, MFE_LOW_RATIO, MFE_NEAR_TP_RATIO,
-    RETRAIN_DAYS, RETRAIN_MIN_GAP_S, RETRAIN_MIN_TRADES,
+    MAE_NEAR_SL_RATIO, MAX_POSITIONS, METRICS_BUFFER_SIZE, METRICS_POLL_S,
+    MFE_LOW_RATIO, MFE_NEAR_TP_RATIO,
+    RETRAIN_DAYS, RETRAIN_MAX_AGE_DAYS, RETRAIN_MIN_GAP_S, RETRAIN_MIN_TRADES,
     RISK_PER_TRADE, SIGNAL_MARGIN, SLIPPAGE_RATE, SYMBOLS, TIMEFRAME,
 )
 from database import Database
@@ -189,14 +190,16 @@ def _fetch_ohlcv_1d(symbol: str, limit: int = 60) -> pd.DataFrame:
     return df[["timestamp", "open", "high", "low", "close", "volume"]]
 
 
-def _compute_features(df: pd.DataFrame, d1_df: Optional[pd.DataFrame] = None) -> Optional[Dict[str, float]]:
+def _compute_features(df: pd.DataFrame, d1_df: Optional[pd.DataFrame] = None,
+                      metrics_df: Optional[pd.DataFrame] = None) -> Optional[Dict[str, float]]:
     """
     Eğitimle BİREBİR AYNI özellik hesaplaması — features.latest_features kullanır.
     Eksik/NaN özellik varsa None döner (varsayılan değerlerle sinyal ÜRETMEZ;
     eski davranış nötr varsayılanlarla trade açabiliyordu).
+    metrics_df: canlı funding+OI buffer'ı (ts, funding_rate, open_interest).
     """
     try:
-        return latest_features(df, d1_df)
+        return latest_features(df, d1_df, metrics_df)
     except Exception as e:
         broadcast({"phase": "error", "msg": f"Özellik hesaplama hatası: {e}"})
         return None
@@ -432,6 +435,77 @@ async def _run_async(testnet: bool) -> None:
     analysis_window: Deque[Dict] = deque(maxlen=50)  # son 50 işlemin analizi
     _retrain_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     _retrain_state = {"count": 0, "ts": time.time()}   # son retrain'deki işlem sayısı + zamanı
+
+    def _maybe_auto_retrain() -> None:
+        """
+        Otomatik yeniden eğitim tetiği (K-13 + K-29). İKİ yerden çağrılır:
+        işlem kapanışında (işlem-sayısı tetiği için doğal an) ve ana sinyal
+        döngüsünde her turda — YAŞ tetiği sadece kapanışta kontrol edilseydi,
+        işlemsiz haftalarda hiç ateşlenemez ve tam da çözmesi gereken
+        bayatlama sorununa kendisi yakalanırdı.
+
+        Tetikler (ikisinde de RETRAIN_MIN_GAP_S guard'ı ŞART — C-v-C (K-22)
+        challenger'ı reddederse model.bin mtime'ı DEĞİŞMEZ; guard olmasa bot
+        her döngüde yeniden eğitime girip retrain fırtınası yaratırdı):
+        - işlem: ≥RETRAIN_MIN_TRADES yeni kapanan işlem
+        - yaş  : model.bin RETRAIN_MAX_AGE_DAYS'ten eski (bayatlama önlemi;
+                 piyasa haftalarca yönsüz kalıp işlem üretmeyebiliyor)
+        """
+        if _model_updating:
+            return
+        total_closed = len(demo_trades)
+        new_trades = total_closed - _retrain_state["count"]
+        gap_ok = time.time() - _retrain_state["ts"] >= RETRAIN_MIN_GAP_S
+        trade_trigger = new_trades >= RETRAIN_MIN_TRADES and gap_ok
+        model_age_days = ((time.time() - MODEL_PATH.stat().st_mtime) / 86400
+                          if MODEL_PATH.exists() else 0.0)
+        age_trigger = model_age_days >= RETRAIN_MAX_AGE_DAYS and gap_ok
+        if not (trade_trigger or age_trigger):
+            return
+        trigger_desc = (f"{new_trades} işlem" if trade_trigger
+                        else f"model {model_age_days:.1f} günden eski")
+        _retrain_state["count"] = total_closed
+        _retrain_state["ts"] = time.time()
+        broadcast({"phase": "server",
+                   "msg": f"otomatik eğitim (tetik: {trigger_desc}) — model güncelleniyor..."})
+
+        def _retrain():
+            global _model_updating
+            nonlocal model_payload, sl_pct, tp_pct
+            _model_updating = True
+            try:
+                import train_engine
+                train_engine.broadcast = broadcast
+                # K-22 (FAZ 6): challenger şampiyonu ortak doğrulamada
+                # yenemezse model.bin DEĞİŞMEZ
+                outcome = train_engine.main(run_server=False, days=RETRAIN_DAYS) or {}
+                if not outcome.get("deployed", True):
+                    _c = outcome.get("champion_val_ev")
+                    _n = outcome.get("challenger_val_ev")
+                    broadcast({"phase": "server",
+                               "msg": (f"🛡 Şampiyon savundu — model DEĞİŞMEDİ "
+                                       f"(challenger val-EV {_n:+.2f} ≤ şampiyon {_c:+.2f})")})
+                    tg.send_async(
+                        f"🛡 <b>Şampiyon Savundu</b>\n"
+                        f"Yeni model doğrulamada mevcut modeli yenemedi.\n"
+                        f"Challenger EV: {_n:+.2f} | Şampiyon EV: {_c:+.2f}\n"
+                        f"Canlı model DEĞİŞMEDİ."
+                    )
+                elif MODEL_PATH.exists():
+                    model_payload = _load_model()
+                    # yeni modelin SL/TP'sini de devral
+                    sl_pct = model_payload.get("sl_pct", sl_pct)
+                    tp_pct = model_payload.get("tp_pct", tp_pct)
+                    broadcast({"phase": "server",
+                               "msg": f"Model yeniden yüklendi | SL={sl_pct*100:.1f}% TP={tp_pct*100:.1f}%"})
+            except Exception as ex:
+                err_msg = f"Yeniden eğitim hatası: {ex}"
+                broadcast({"phase": "error", "msg": err_msg})
+                tg.send_async(f"❌ <b>Eğitim Hatası</b>\n{err_msg}")
+            finally:
+                _model_updating = False
+
+        asyncio.get_event_loop().run_in_executor(_retrain_executor, _retrain)
     realized_pnl = 0.0     # gün içi gerçekleşen PnL (günlük fren kontrolü için)
     day_start_balance = DEMO_START_BALANCE   # gün başı bakiye — yüzde frenlerin paydası
     daily_paused = False   # kayıp freni / kâr kilidi devredeyse o gün yeni işlem yok
@@ -490,6 +564,9 @@ async def _run_async(testnet: bool) -> None:
     # Anlık mum verisi — WS'den güncellenir, SL/TP kontrolünde kullanılır
     _last_candles: Dict[str, Dict] = {}              # sym → {price, high, low}
     _candle_buffer: Dict[str, Deque] = {}            # sym → kapanmış mumlar (maxlen=200)
+    # Funding rate + open interest rolling buffer (ts, funding_rate, open_interest)
+    # → latest_features'a geçirilir; oi_change_1h için ~1h'lik geçmiş taşır.
+    _metrics_buffer: Dict[str, Deque] = {s: deque(maxlen=METRICS_BUFFER_SIZE) for s in SYMBOLS}
     _last_error_ts: Dict[str, float] = {}            # Telegram hata spam önleme
     _feed_ts = {"t": 0.0}                            # son başarılı fiyat güncellemesi (sağlık için)
     _health_last = {"t": 0.0}                        # son sağlık yayını
@@ -611,8 +688,48 @@ async def _run_async(testnet: bool) -> None:
                         pass   # geçici ağ hatası — sonraki turda tekrar dene
                 await asyncio.sleep(2)   # K-13 (B-3): SL/TP tespiti için gecikme payı azaltıldı
 
-        price_task = asyncio.create_task(_price_loop())
-        rest_task  = asyncio.create_task(_rest_price_loop())
+        async def _metrics_loop():
+            """
+            Funding rate + open interest çekici (her METRICS_POLL_S).
+            ccxt üzerinden public veri; hata durumunda SESSİZ geçer (döngüyü
+            öldürmez). Buffer latest_features'a beslenir → funding_rate +
+            oi_change_1h özellikleri canlıda eğitimdeki as-of semantiğiyle üretilir.
+            """
+            announced = False
+            while not _stop_flag:
+                for sym in SYMBOLS:
+                    funding = None
+                    open_interest = None
+                    try:
+                        fr = await asyncio.to_thread(exchange.fetch_funding_rate, sym)
+                        if fr.get("fundingRate") is not None:
+                            funding = float(fr["fundingRate"])
+                    except Exception:
+                        pass
+                    try:
+                        oi = await asyncio.to_thread(exchange.fetch_open_interest, sym)
+                        oi_val = oi.get("openInterestAmount")
+                        if oi_val is None:
+                            oi_val = oi.get("openInterestValue")
+                        if oi_val is not None:
+                            open_interest = float(oi_val)
+                    except Exception:
+                        pass
+                    if funding is not None or open_interest is not None:
+                        _metrics_buffer.setdefault(sym, deque(maxlen=METRICS_BUFFER_SIZE)).append({
+                            "ts": int(time.time() * 1000),
+                            "funding_rate": funding,
+                            "open_interest": open_interest,
+                        })
+                        if not announced:
+                            announced = True
+                            broadcast({"phase": "server",
+                                       "msg": f"Piyasa metrikleri aktif (funding+OI, {METRICS_POLL_S} sn)"})
+                await asyncio.sleep(METRICS_POLL_S)
+
+        price_task   = asyncio.create_task(_price_loop())
+        rest_task    = asyncio.create_task(_rest_price_loop())
+        metrics_task = asyncio.create_task(_metrics_loop())
 
         try:
             # ── 1 saniyelik döngü: manuel kapat + wallet/position broadcast ──
@@ -735,6 +852,7 @@ async def _run_async(testnet: bool) -> None:
         finally:
             price_task.cancel()
             rest_task.cancel()
+            metrics_task.cancel()
 
     mode_label = f"PAPER (demo kasa: {DEMO_START_BALANCE} USDT)" if paper_mode else "CANLI"
     dir_label  = "LONG+SHORT" if bidir else model_payload.get("direction", "LONG")
@@ -948,51 +1066,9 @@ async def _run_async(testnet: bool) -> None:
                                 "self_eval_text": ev_text,
                             })
 
-                            # ── Otomatik yeniden eğitim: ≥20 yeni işlem VE ≥12 saat ara ──
-                            total_closed = len(demo_trades)
-                            if (total_closed - _retrain_state["count"] >= RETRAIN_MIN_TRADES
-                                    and time.time() - _retrain_state["ts"] >= RETRAIN_MIN_GAP_S):
-                                _retrain_state["count"] = total_closed
-                                _retrain_state["ts"] = time.time()
-                                broadcast({"phase": "server",
-                                           "msg": f"{total_closed} işlem tamamlandı — model güncelleniyor..."})
-                                def _retrain():
-                                    global _model_updating
-                                    nonlocal model_payload, sl_pct, tp_pct
-                                    _model_updating = True
-                                    try:
-                                        import train_engine
-                                        train_engine.broadcast = broadcast
-                                        # K-22 (FAZ 6): challenger şampiyonu ortak
-                                        # doğrulamada yenemezse model.bin DEĞİŞMEZ
-                                        outcome = train_engine.main(run_server=False, days=RETRAIN_DAYS) or {}
-                                        if not outcome.get("deployed", True):
-                                            _c = outcome.get("champion_val_ev")
-                                            _n = outcome.get("challenger_val_ev")
-                                            broadcast({"phase": "server",
-                                                       "msg": (f"🛡 Şampiyon savundu — model DEĞİŞMEDİ "
-                                                               f"(challenger val-EV {_n:+.2f} ≤ şampiyon {_c:+.2f})")})
-                                            tg.send_async(
-                                                f"🛡 <b>Şampiyon Savundu</b>\n"
-                                                f"Yeni model doğrulamada mevcut modeli yenemedi.\n"
-                                                f"Challenger EV: {_n:+.2f} | Şampiyon EV: {_c:+.2f}\n"
-                                                f"Canlı model DEĞİŞMEDİ."
-                                            )
-                                        elif MODEL_PATH.exists():
-                                            model_payload = _load_model()
-                                            # yeni modelin SL/TP'sini de devral
-                                            sl_pct = model_payload.get("sl_pct", sl_pct)
-                                            tp_pct = model_payload.get("tp_pct", tp_pct)
-                                            broadcast({"phase": "server",
-                                                       "msg": f"Model yeniden yüklendi | SL={sl_pct*100:.1f}% TP={tp_pct*100:.1f}%"})
-                                    except Exception as ex:
-                                        err_msg = f"Yeniden eğitim hatası: {ex}"
-                                        broadcast({"phase": "error", "msg": err_msg})
-                                        tg.send_async(f"❌ <b>Eğitim Hatası</b>\n{err_msg}")
-                                    finally:
-                                        _model_updating = False
-                                loop = asyncio.get_event_loop()
-                                loop.run_in_executor(_retrain_executor, _retrain)
+                            # ── Otomatik yeniden eğitim (K-13 + K-29) — ortak
+                            # tetik mantığı _maybe_auto_retrain'de
+                            _maybe_auto_retrain()
 
                             broadcast({
                                 "phase": "trade_close",
@@ -1056,6 +1132,11 @@ async def _run_async(testnet: bool) -> None:
 
             open_syms = list(demo_positions.keys()) if paper_mode else []
 
+            # K-29: yaş tetiği işlemsiz dönemlerde de kontrol edilsin — sadece
+            # işlem kapanışında kontrol edilseydi, piyasa işlem üretmezken
+            # (tam da yaş tetiğinin var olma nedeni) hiç ateşlenemezdi
+            _maybe_auto_retrain()
+
             # ── Döngü seviyesi bloklar (K-19): panik / retrain / günlük fren /
             #    sağlık duraklatması — tek noktadan
             if gate.global_block(_model_updating, daily_paused):
@@ -1077,7 +1158,9 @@ async def _run_async(testnet: bool) -> None:
                         await _emit_decision(sym, blocked_by="BUFFER_SHORT", persist=False)
                         continue
                     df = pd.DataFrame(buf)
-                    features = _compute_features(df, _d1_buffer.get(sym))
+                    mbuf = list(_metrics_buffer.get(sym, deque()))
+                    metrics_df = pd.DataFrame(mbuf) if mbuf else None
+                    features = _compute_features(df, _d1_buffer.get(sym), metrics_df)
                     entry_price = _last_prices.get(sym)
                     if entry_price is None:
                         broadcast({"phase": "server",

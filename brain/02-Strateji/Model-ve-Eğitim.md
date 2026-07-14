@@ -27,9 +27,15 @@ Deneyle sabit: 90+ gün ve tam veri, her iki yönü precision kapısına takıyo
 ## Threshold seçimi
 Doğrulamada **beklenen toplam net PnL maksimizasyonu (K-15)**: sinyal sayısı × işlem başına komisyon-dahil EV. Kısıt: **dinamik precision tabanı** = kombonun maliyet-dahil başabaş WR'ı + %5. Yön tabanı geçemezse threshold 1.01 → o yön kapalı (bilinçli güvenlik davranışı — "bot sinyal üretmiyor" şikayetinin meşru nedeni olabilir). Eskiden F1 maksimize ediliyordu — sınıflandırma metriği para ile hizalı değildi.
 
+## Eğitimde örnek ağırlığı (K-29 — 13.07)
+45 günlük pencerede satırlar zaman-doğrusal ağırlıklanır: en eski 0.5 → en yeni 1.0 (`RECENCY_WEIGHT_MIN`). Eski rejimlerin etkisi pencereyi kısaltmadan azaltılır. Ağırlık SADECE fit'e uygulanır — doğrulama seti ağırlıksızdır (erken durdurma, eşik ve yön seçimi tarafsız kalır). C-v-C bu değişikliğin zararlı çıkması ihtimaline karşı otomatik sigortadır.
+
 ## Yeniden eğitim
 - Manuel: `/train` (Telegram/dashboard) → son 45 gün
-- Otomatik: her 20 kapanan paper işlemde (eğitim sırasında yeni pozisyon açılmaz; yeni SL/TP devralınır)
+- Otomatik, iki tetik (`_maybe_auto_retrain`, K-13 + K-29):
+  - **İşlem tetiği:** ≥20 yeni kapanan paper işlem + ≥12 saat ara
+  - **Yaş tetiği:** model.bin ≥7 gün eski (`RETRAIN_MAX_AGE_DAYS`) + ≥12 saat ara — yönsüz piyasada işlem-sayısı tetiği hiç ateşlenmediği için bayatlama önlemi. DİKKAT: yaş tetiği ana sinyal döngüsünde de kontrol edilir (sadece işlem kapanışında kontrol edilseydi işlemsiz dönemde hiç çalışmazdı); 12s gap guard'ı C-v-C reddi sonrası retrain fırtınasını engeller (red, mtime'ı değiştirmez)
+- Eğitim sırasında yeni pozisyon açılmaz; yeni SL/TP devralınır
 - Her eğitim `model_runs` tablosuna + [[Eğitim-Günlüğü]]'ne kaydolur
 
 ## Champion vs Challenger (K-22 — 05.07)

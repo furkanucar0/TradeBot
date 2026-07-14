@@ -34,10 +34,20 @@ LOOP_INTERVAL = 30         # saniye — sinyal değerlendirme periyodu
 DEMO_START_BALANCE = 100.0 # paper kasa başlangıcı
 CANDLE_BUFFER_SIZE = 3000  # 1m buffer (50 saat) — 1h MTF warmup için
 
+# ── Piyasa metrikleri: funding rate + open interest ──────────────────────────
+# Funding ve OI yavaş değişen büyüklükler (funding 8h, OI Binance geçmişinde
+# 5m granülerlik) — sık çekmeye gerek yok. 300 sn hem canlı buffer'ı hem de
+# live_fetcher'ın market_metrics yazımını besler.
+METRICS_POLL_S = 300       # funding rate + open interest çekme periyodu (saniye)
+METRICS_BUFFER_SIZE = 100  # canlı metrik rolling buffer (1 saat + bol pay)
+
 # ── Yeniden eğitim (K-4, K-13b) ──────────────────────────────────────────────
 RETRAIN_DAYS = 45          # kayan eğitim penceresi
 RETRAIN_MIN_TRADES = 20    # otomatik retrain için asgari yeni kapanan işlem
 RETRAIN_MIN_GAP_S = 12 * 3600  # retrainler arası asgari süre
+# K-29: işlem sayısı tetiği hiç ateşlenmese bile model bu yaştan eskiyse
+# yeniden eğit (bayatlama önlemi). C-v-C (K-22) kötü challenger'ı zaten reddeder.
+RETRAIN_MAX_AGE_DAYS = 7
 
 # ── Eğitim / backtest (K-2, K-7, K-8, K-10) ──────────────────────────────────
 WIN_RATE_TARGET = 0.60     # dinamik WR hedefinin üst sınırı
@@ -49,6 +59,10 @@ PURGE_HOURS = 24           # bölme sınırlarında etiket sızıntısı tamponu
 MIN_DIRECTION_PREC = 0.35  # mutlak precision tabanı (dinamik taban bununla max'lanır)
 SL_GRID = [0.003, 0.004, 0.005]
 TP_GRID = [0.006, 0.008, 0.010, 0.012]
+# K-29: eğitim penceresinin EN ESKİ satırının örnek ağırlığı; en yeni satır 1.0,
+# arası zaman-doğrusal. Champion-vs-Challenger (K-22) bu değişikliğin zarar
+# vermesine karşı otomatik sigorta.
+RECENCY_WEIGHT_MIN = 0.5
 
 # ── Risk duvarı (FAZ 3 — K-19) ───────────────────────────────────────────────
 HEALTH_PAUSE_SCORE  = 40   # sağlık skoru bunun ALTINA inerse yeni işlem duraklar
