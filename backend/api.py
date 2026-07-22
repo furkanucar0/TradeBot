@@ -380,8 +380,10 @@ async def system_resources():
 _research_state = {"running": False, "last_run_ts": 0.0}
 
 
-def _run_research_thread(reason: str) -> bool:
-    """Walk-forward'ı düşük öncelikli thread'de başlatır. False = başlatılamadı."""
+def _run_research_thread(reason: str, folds: int = 8) -> bool:
+    """Walk-forward'ı düşük öncelikli thread'de başlatır. False = başlatılamadı.
+    DB'de ~13 aylık veri var → varsayılan 8 katman (~2 ay geriye); /research/run
+    ile 24'e kadar derinleştirilebilir (fold başına ~2 dk, nice=10)."""
     if _research_state["running"] or _bot_state["is_training"]:
         return False
     _research_state["running"] = True
@@ -391,8 +393,8 @@ def _run_research_thread(reason: str) -> bool:
             import research
             import telegram_notifier as _tg
             _push_event({"phase": "server",
-                         "msg": f"🔬 Walk-forward araştırma koşusu başladı ({reason})"})
-            report = research.run_walkforward()
+                         "msg": f"🔬 Walk-forward araştırma koşusu başladı ({reason}, {folds} katman)"})
+            report = research.run_walkforward(max_folds=folds)
             _research_state["last_run_ts"] = time.time()
             _tg.send_async(research.format_telegram_summary(report))
             _push_event({"phase": "server",
@@ -409,11 +411,13 @@ def _run_research_thread(reason: str) -> bool:
 
 
 @app.post("/research/run")
-async def research_run():
-    """Walk-forward koşusunu elle tetikler (gece otomatiği beklemeden)."""
-    if not _run_research_thread("manuel"):
+async def research_run(folds: int = 8):
+    """Walk-forward koşusunu elle tetikler (gece otomatiği beklemeden).
+    folds: katman sayısı (1-24; her katman 7 gün geriye gider)."""
+    folds = max(1, min(folds, 24))
+    if not _run_research_thread("manuel", folds):
         raise HTTPException(400, "Araştırma zaten çalışıyor veya eğitim devam ediyor")
-    return {"status": "started"}
+    return {"status": "started", "folds": folds}
 
 
 @app.get("/research")

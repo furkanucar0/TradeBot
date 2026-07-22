@@ -26,7 +26,7 @@ import pandas as pd
 from sklearn.metrics import precision_score
 
 import train_engine
-from config import FEE_RATE, MIN_DIRECTION_PREC, SLIPPAGE_RATE
+from config import ADX_RANGING_FLOOR, FEE_RATE, MIN_DIRECTION_PREC, SLIPPAGE_RATE
 from features import FEATURE_COLS, add_features
 
 REPORT_PATH = Path(__file__).resolve().parent / "reports" / "walkforward_last.json"
@@ -132,6 +132,11 @@ def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
             "sl_pct": sl, "tp_pct": tp,
             "window_rows": len(df_w), "oos_rows": len(df_oos),
         }
+        # Canlı zincirin baskın filtresi: 1h ADX < taban → sinyal iptal (K-13).
+        # Ham model sinyali ile ADX-filtreli sinyali AYRI AYRI ölçüyoruz —
+        # fark, canlıdaki yatay-piyasa freninin kaç para kurtardığının kanıtı.
+        adx_ok = (df_oos["h1_adx"] >= ADX_RANGING_FLOOR).astype(int).values
+
         for direction in ("LONG", "SHORT"):
             # df_test parametresine OOS verilir: train_model test setine hiç
             # bakmadan eğitir, proba_test bize hazır OOS olasılıkları döner
@@ -141,20 +146,30 @@ def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
             y_pred_oos = (proba_oos >= thr).astype(int)
             bt = train_engine.backtest(df_oos, y_pred_oos, proba_oos, sl, tp,
                                        direction=direction)
+            bt_adx = train_engine.backtest(df_oos, y_pred_oos * adx_ok,
+                                           proba_oos, sl, tp, direction=direction)
             fold[direction.lower()] = {
                 "thr": thr,
                 "oos_trades": bt["trades"],
                 "oos_pnl": bt["total_pnl"],
                 "oos_wr": bt["win_rate"],
                 "oos_max_dd": bt["max_drawdown"],
+                "adx_trades": bt_adx["trades"],
+                "adx_pnl": bt_adx["total_pnl"],
+                "adx_wr": bt_adx["win_rate"],
             }
         fold["oos_pnl_toplam"] = round(
             fold["long"]["oos_pnl"] + fold["short"]["oos_pnl"], 4)
+        fold["adx_pnl_toplam"] = round(
+            fold["long"]["adx_pnl"] + fold["short"]["adx_pnl"], 4)
         fold_results.append(fold)
 
     total_pnl = round(sum(f["oos_pnl_toplam"] for f in fold_results), 4)
+    total_pnl_adx = round(sum(f["adx_pnl_toplam"] for f in fold_results), 4)
     total_trades = sum(f[d]["oos_trades"] for f in fold_results for d in ("long", "short"))
+    total_trades_adx = sum(f[d]["adx_trades"] for f in fold_results for d in ("long", "short"))
     pos_folds = sum(1 for f in fold_results if f["oos_pnl_toplam"] > 0)
+    pos_folds_adx = sum(1 for f in fold_results if f["adx_pnl_toplam"] > 0)
 
     report = {
         "ran_at_utc": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
@@ -167,6 +182,9 @@ def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
             "pozitif_fold": pos_folds,
             "toplam_oos_pnl": total_pnl,
             "toplam_oos_islem": total_trades,
+            "adx_pozitif_fold": pos_folds_adx,
+            "adx_toplam_pnl": total_pnl_adx,
+            "adx_toplam_islem": total_trades_adx,
         },
     }
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -186,16 +204,17 @@ def format_telegram_summary(report: Dict[str, Any]) -> str:
         "",
     ]
     for f in report["folds"]:
-        sign = "🟢" if f["oos_pnl_toplam"] > 0 else "🔴"
+        sign = "🟢" if f["adx_pnl_toplam"] > 0 else "🔴"
         lines.append(
             f"{sign} {f['train_end_utc']} sonrası 7g: "
-            f"<b>{f['oos_pnl_toplam']:+.2f} USDT</b> "
-            f"(L:{f['long']['oos_trades']}/{f['long']['oos_pnl']:+.1f} "
-            f"S:{f['short']['oos_trades']}/{f['short']['oos_pnl']:+.1f})")
+            f"ham <b>{f['oos_pnl_toplam']:+.2f}</b> | "
+            f"ADX filtreli <b>{f['adx_pnl_toplam']:+.2f} USDT</b>")
     lines += [
         "",
-        f"Toplam OOS: <b>{o['toplam_oos_pnl']:+.2f} USDT</b> | "
-        f"{o['toplam_oos_islem']} işlem | {o['pozitif_fold']}/{o['fold_sayisi']} katman pozitif",
+        f"Ham model: {o['toplam_oos_pnl']:+.2f} USDT ({o['toplam_oos_islem']} işlem, "
+        f"{o['pozitif_fold']}/{o['fold_sayisi']} katman +)",
+        f"ADX filtreli (canlı zincir): <b>{o['adx_toplam_pnl']:+.2f} USDT</b> "
+        f"({o['adx_toplam_islem']} işlem, {o['adx_pozitif_fold']}/{o['fold_sayisi']} katman +)",
         "ℹ️ Rapor kanıttır — canlı model DEĞİŞMEDİ.",
     ]
     return "\n".join(lines)
