@@ -49,6 +49,21 @@ RETRAIN_MIN_GAP_S = 12 * 3600  # retrainler arası asgari süre
 # yeniden eğit (bayatlama önlemi). C-v-C (K-22) kötü challenger'ı zaten reddeder.
 RETRAIN_MAX_AGE_DAYS = 7
 
+# ── Döngü bekçisi (K-30) ─────────────────────────────────────────────────────
+# 19-21 Temmuz olayı: sinyal döngüsü günlerce sessizce durdu; API/health yeşil
+# kaldığı ve başarısız yollar hiçbir kalıcı iz bırakmadığı için günler sonra
+# fark edildi. Bekçi, ana döngü kalp atışı kesilirse Telegram'dan haber verir.
+WATCHDOG_STALL_S = 600         # kalp atışı bu kadar süre yoksa döngü askıda say
+WATCHDOG_ALERT_GAP_S = 3600    # aynı uyarının Telegram tekrar aralığı
+RETRAIN_STUCK_ALERT_S = 2 * 3600   # retrain kilidi bu süreyi aşarsa uyar
+RETRAIN_STUCK_FORCE_S = 6 * 3600   # bu süreyi aşarsa kilidi zorla aç (eski modelle devam)
+SILENT_PERSIST_GAP_S = 600     # NO_PRICE/NO_FEATURES vb. sessiz blokların DB'ye
+                               # yazılma aralığı (sembol+neden başına; iz bırakma amaçlı)
+PAPER_AUTOSTART = os.getenv("PAPER_AUTOSTART", "1").strip() not in ("0", "false", "")
+                               # backend açılışında paper botu otomatik başlat —
+                               # Jenkins her deploy'da konteyneri yeniden yarattığı
+                               # için bot yoksa sessizce işlem dışı kalıyordu
+
 # ── Eğitim / backtest (K-2, K-7, K-8, K-10) ──────────────────────────────────
 WIN_RATE_TARGET = 0.60     # dinamik WR hedefinin üst sınırı
 RR_TARGET = 2.0            # min R:R

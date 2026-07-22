@@ -20,6 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 import google_auth
 from config import (
     ALLOWED_EMAILS, API_HOST, API_KEY, API_PORT, CORS_EXTRA_ORIGINS, GOOGLE_CLIENT_ID,
+    PAPER_AUTOSTART,
 )
 from database import Database, get_database_path
 
@@ -214,6 +215,11 @@ async def get_status():
     _bot_state["ready_for_live"] = ready
 
     import risk_gate
+    import live_trader
+    # K-30: is_running=true iken kalp atışı yaşı büyüyorsa sinyal döngüsü
+    # askıda demektir — 19-21 Temmuz'daki sessiz durma dışarıdan ancak
+    # bununla görülebilir.
+    hb_age = live_trader.heartbeat_age() if _bot_state["is_running"] else None
     return {
         "is_running": _bot_state["is_running"],
         "is_training": _bot_state["is_training"],
@@ -225,6 +231,7 @@ async def get_status():
         "last_rr": summary.get("rr"),
         "last_trained": model_run.get("trained_at") if model_run else None,
         "symbols": summary.get("symbols", ["BTC/USDT", "ETH/USDT"]),
+        "loop_heartbeat_age_s": round(hb_age, 1) if hb_age is not None else None,
     }
 
 
@@ -528,22 +535,67 @@ async def bot_start(background_tasks: BackgroundTasks, testnet: bool = True):
     if not MODEL_PATH.exists():
         raise HTTPException(404, "Model bulunamadı. Önce /train çalıştırın.")
 
+    _launch_trader(testnet)
+    _push_event({"phase": "server", "msg": f"Bot başlatıldı ({'testnet' if testnet else 'mainnet'})"})
+    return {"status": "started", "testnet": testnet}
+
+
+def _launch_trader(testnet: bool) -> None:
+    """Trader thread'ini başlatır — /bot/start ve açılış otomatiği (K-30)
+    ortak kullanır. Tüm ön kontroller (panik, mainnet protokolü, model)
+    çağıranın sorumluluğundadır."""
     def run_trader():
         _bot_state["is_running"] = True
+        crash_err = None
         try:
             import live_trader
             live_trader.broadcast = _push_event
             live_trader.run(testnet=testnet)
         except Exception as e:
+            crash_err = e
             _push_event({"phase": "error", "msg": f"Trader hatası: {e}"})
         finally:
             _bot_state["is_running"] = False
+            # K-30: trader thread'i kullanıcı DURDURMADAN öldüyse bu sessiz bir
+            # arızadır (14 Tem gecesi böyle öldü, 02:30'a kadar kimse fark
+            # etmedi) — broadcast websocket'te kaybolur, Telegram kalıcıdır.
+            import live_trader as _lt
+            if crash_err is not None or not _lt._stop_flag:
+                try:
+                    import telegram_notifier as _tg
+                    _tg.send_async(
+                        "🛑 <b>Trader Beklenmedik Şekilde Durdu</b>\n"
+                        + (f"Hata: {crash_err}\n" if crash_err else "Hata mesajı yok (sessiz ölüm).\n")
+                        + "Bot işlem TARAMIYOR — /paper ile yeniden başlatılabilir."
+                    )
+                except Exception:
+                    pass
 
     t = threading.Thread(target=run_trader, daemon=True)
     t.start()
     _bot_state["trader_thread"] = t
-    _push_event({"phase": "server", "msg": f"Bot başlatıldı ({'testnet' if testnet else 'mainnet'})"})
-    return {"status": "started", "testnet": testnet}
+
+
+@app.on_event("startup")
+async def _autostart_paper():
+    """K-30: Jenkins her deploy'da konteyneri yeniden yarattığı için paper bot
+    her deploy sonrası sessizce işlem dışı kalıyordu (biri elle /paper diyene
+    kadar). PAPER_AUTOSTART=1 (varsayılan) ise model varsa ve panik kilidi
+    yoksa paper bot açılışta kendiliğinden başlar. Mainnet ASLA otomatik
+    başlamaz."""
+    if not PAPER_AUTOSTART:
+        return
+
+    def _delayed():
+        time.sleep(10)   # uvicorn + ağ otursun
+        import risk_gate
+        if _bot_state["is_running"] or risk_gate.panic_active() or not MODEL_PATH.exists():
+            return
+        _launch_trader(testnet=True)
+        _push_event({"phase": "server",
+                     "msg": "Paper bot açılışta otomatik başlatıldı (K-30, PAPER_AUTOSTART)"})
+
+    threading.Thread(target=_delayed, daemon=True).start()
 
 
 @app.post("/bot/stop")

@@ -24,7 +24,9 @@ from config import (
     MAE_NEAR_SL_RATIO, MAX_POSITIONS, METRICS_BUFFER_SIZE, METRICS_POLL_S,
     MFE_LOW_RATIO, MFE_NEAR_TP_RATIO,
     RETRAIN_DAYS, RETRAIN_MAX_AGE_DAYS, RETRAIN_MIN_GAP_S, RETRAIN_MIN_TRADES,
-    RISK_PER_TRADE, SIGNAL_MARGIN, SLIPPAGE_RATE, SYMBOLS, TIMEFRAME,
+    RETRAIN_STUCK_ALERT_S, RETRAIN_STUCK_FORCE_S,
+    RISK_PER_TRADE, SIGNAL_MARGIN, SILENT_PERSIST_GAP_S, SLIPPAGE_RATE,
+    SYMBOLS, TIMEFRAME, WATCHDOG_ALERT_GAP_S, WATCHDOG_STALL_S,
 )
 from database import Database
 from features import FEATURE_COLS, latest_features
@@ -38,6 +40,15 @@ _stop_flag = False
 _model_updating = False        # retrain sırasında yeni pozisyon açmayı engeller
 _manual_close_requests: set   = set()   # manuel kapatılacak semboller
 broadcast: Callable[[Dict[str, Any]], None] = lambda ev: None
+
+# K-30: ana sinyal döngüsü kalp atışı. 19-21 Temmuz olayında döngü günlerce
+# sessizce durdu ama API/health yeşil kaldı — bekçi bu ayrımı görünür kılar.
+_heartbeat = {"loop_ts": 0.0, "note": "başlatılmadı"}
+
+
+def heartbeat_age() -> Optional[float]:
+    """Ana döngünün son kalp atışından bu yana geçen saniye (None = hiç atmadı)."""
+    return (time.time() - _heartbeat["loop_ts"]) if _heartbeat["loop_ts"] else None
 
 # Günlük fren yüzdeleri config.py'de: DAILY_LOSS_LIMIT_PCT / DAILY_PROFIT_LOCK_PCT
 
@@ -403,6 +414,10 @@ def _calc_position_margin(
 async def _run_async(testnet: bool) -> None:
     global _stop_flag
     _stop_flag = False
+    # K-30: önceki oturumdan kalan bayat kalp atışı yeni başlatmada yanlış
+    # alarm vermesin — sayaç "şimdi"den başlar
+    _heartbeat["loop_ts"] = time.time()
+    _heartbeat["note"] = "başlatılıyor"
 
     model_payload = _load_model()
     sl_pct: float = model_payload.get("sl_pct", 0.005)
@@ -434,7 +449,9 @@ async def _run_async(testnet: bool) -> None:
     demo_trades:    List[Dict] = []
     analysis_window: Deque[Dict] = deque(maxlen=50)  # son 50 işlemin analizi
     _retrain_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    _retrain_state = {"count": 0, "ts": time.time()}   # son retrain'deki işlem sayısı + zamanı
+    # count/ts: son retrain'deki işlem sayısı + zamanı; busy_since: aktif
+    # retrain'in başlangıcı (K-30 bekçisi askıda kalan kilidi bununla ölçer)
+    _retrain_state = {"count": 0, "ts": time.time(), "busy_since": 0.0}
 
     def _maybe_auto_retrain() -> None:
         """
@@ -466,6 +483,7 @@ async def _run_async(testnet: bool) -> None:
                         else f"model {model_age_days:.1f} günden eski")
         _retrain_state["count"] = total_closed
         _retrain_state["ts"] = time.time()
+        _retrain_state["busy_since"] = time.time()
         broadcast({"phase": "server",
                    "msg": f"otomatik eğitim (tetik: {trigger_desc}) — model güncelleniyor..."})
 
@@ -504,6 +522,7 @@ async def _run_async(testnet: bool) -> None:
                 tg.send_async(f"❌ <b>Eğitim Hatası</b>\n{err_msg}")
             finally:
                 _model_updating = False
+                _retrain_state["busy_since"] = 0.0
 
         asyncio.get_event_loop().run_in_executor(_retrain_executor, _retrain)
     realized_pnl = 0.0     # gün içi gerçekleşen PnL (günlük fren kontrolü için)
@@ -570,6 +589,8 @@ async def _run_async(testnet: bool) -> None:
     _last_error_ts: Dict[str, float] = {}            # Telegram hata spam önleme
     _feed_ts = {"t": 0.0}                            # son başarılı fiyat güncellemesi (sağlık için)
     _health_last = {"t": 0.0}                        # son sağlık yayını
+    # K-30 bekçi durumu: son kontrol + uyarı zaman damgaları (Telegram spam önleme)
+    _watchdog = {"check_ts": 0.0, "stall_alert_ts": 0.0, "stuck_alert_ts": 0.0}
 
     async def _ticker():
         """
@@ -578,6 +599,7 @@ async def _run_async(testnet: bool) -> None:
         Bağlantı koparsa 3 saniyede otomatik yeniden bağlanır.
         """
         nonlocal demo_balance, realized_pnl, peak_balance
+        global _model_updating   # K-30 bekçisi askıda kalan retrain kilidini açabilir
         from websockets.asyncio.client import connect as _ws_connect
 
         # kline_1m: her tick'te cari mum o/h/l/c gelir
@@ -848,6 +870,51 @@ async def _run_async(testnet: bool) -> None:
                     except Exception:
                         pass
 
+                # ── K-30 Bekçi: ana sinyal döngüsü ölürse/askıda kalırsa haber ver.
+                # Bu housekeeping döngüsü 19-21 Temmuz olayında bile ayakta kaldı
+                # (health yayını hiç kesilmedi) — bekçi bu yüzden BURADA yaşar,
+                # izlediği döngünün içinde değil.
+                if time.time() - _watchdog["check_ts"] >= 60:
+                    _watchdog["check_ts"] = time.time()
+                    _age = heartbeat_age()
+                    if (_age is not None and _age > WATCHDOG_STALL_S
+                            and time.time() - _watchdog["stall_alert_ts"] >= WATCHDOG_ALERT_GAP_S):
+                        _watchdog["stall_alert_ts"] = time.time()
+                        _stall_msg = (f"Sinyal döngüsü {_age/60:.0f} dakikadır atmıyor "
+                                      f"(son aşama: {_heartbeat['note']})")
+                        broadcast({"phase": "error", "msg": f"🐕 Bekçi: {_stall_msg}"})
+                        tg.send_async(f"🐕 <b>Bekçi Uyarısı</b>\n{_stall_msg}\n"
+                                      f"Bot işlem TARAMIYOR — kontrol gerekli.")
+                        try:
+                            # zaman aşımı ŞART: ana döngü DB üzerinde asılıysa
+                            # bekçinin DB yazımı da aynı kuyrukta asılı kalır
+                            # ve bekçiyi de öldürür
+                            await asyncio.wait_for(
+                                _emit_decision("*", blocked_by="LOOP_STALL",
+                                               detail={"age_s": round(_age),
+                                                       "note": _heartbeat["note"]}),
+                                timeout=5)
+                        except Exception:
+                            pass
+                    # Askıda kalan retrain kilidi: uyar, çok uzarsa zorla aç
+                    # (eğitim normalde dakikalar sürer; saatler = askıda thread)
+                    if _model_updating and _retrain_state.get("busy_since"):
+                        _busy = time.time() - _retrain_state["busy_since"]
+                        if _busy > RETRAIN_STUCK_FORCE_S:
+                            _retrain_state["busy_since"] = 0.0
+                            _model_updating = False
+                            broadcast({"phase": "error",
+                                       "msg": f"🐕 Bekçi: retrain kilidi {_busy/3600:.1f} saattir açık — ZORLA açıldı, eski modelle devam"})
+                            tg.send_async(f"🐕 <b>Bekçi: Retrain Kilidi Zorla Açıldı</b>\n"
+                                          f"Eğitim {_busy/3600:.1f} saattir bitmedi (askıda). "
+                                          f"Bot mevcut modelle işleme devam ediyor.")
+                        elif (_busy > RETRAIN_STUCK_ALERT_S
+                                and time.time() - _watchdog["stuck_alert_ts"] >= WATCHDOG_ALERT_GAP_S):
+                            _watchdog["stuck_alert_ts"] = time.time()
+                            tg.send_async(f"🐕 <b>Bekçi Uyarısı</b>\n"
+                                          f"Retrain kilidi {_busy/3600:.1f} saattir açık — "
+                                          f"eğitim askıda kalmış olabilir.")
+
                 await asyncio.sleep(1)
         finally:
             price_task.cancel()
@@ -916,6 +983,20 @@ async def _run_async(testnet: bool) -> None:
                     broadcast({"phase": "server",
                                "msg": f"{sym} günlük veri alınamadı — 1d özellikler devre dışı"})
 
+    # K-30: sessiz bloklar (NO_PRICE/NO_FEATURES/BUFFER_SHORT/GLOBAL_BLOCK)
+    # eskiden DB'ye HİÇ yazılmıyordu → döngü günlerce boş dönse geriye tek iz
+    # kalmıyor, kök neden analizi imkânsızlaşıyordu (19-21 Temmuz olayı).
+    # Sembol+neden başına en fazla SILENT_PERSIST_GAP_S'de bir kalıcı kayıt.
+    _silent_last: Dict[str, float] = {}
+
+    def _persist_throttled(sym: str, reason: str) -> bool:
+        key = f"{sym}:{reason}"
+        now = time.time()
+        if now - _silent_last.get(key, 0.0) >= SILENT_PERSIST_GAP_S:
+            _silent_last[key] = now
+            return True
+        return False
+
     async def _emit_decision(sym: str, *, blocked_by: Optional[str] = None,
                              direction: Optional[str] = None,
                              proba: Optional[float] = None,
@@ -945,6 +1026,10 @@ async def _run_async(testnet: bool) -> None:
     loss_day = time.strftime("%Y-%m-%d", time.gmtime())   # günlük kayıp limiti UTC gün bazlı
     try:
         while not _stop_flag:
+            # K-30: kalp atışı — bekçi (housekeeping döngüsü) bunun yaşına bakar
+            _heartbeat["loop_ts"] = time.time()
+            _heartbeat["note"] = "döngü başı"
+
             # ── Günlük frenler: yeni UTC gününde sıfırla + günlük rapor ──────
             today = time.strftime("%Y-%m-%d", time.gmtime())
             if today != loss_day:
@@ -1140,8 +1225,19 @@ async def _run_async(testnet: bool) -> None:
             # ── Döngü seviyesi bloklar (K-19): panik / retrain / günlük fren /
             #    sağlık duraklatması — tek noktadan
             if gate.global_block(_model_updating, daily_paused):
+                # K-30: bloklu turlar da iz bıraksın — hangi kilit, ne zamandır
+                _heartbeat["note"] = "global_block"
+                if _persist_throttled("*", "GLOBAL_BLOCK"):
+                    await _emit_decision("*", blocked_by="GLOBAL_BLOCK", detail={
+                        "retrain": _model_updating,
+                        "daily_paused": daily_paused,
+                        "health_paused": gate.health_paused,
+                        "panic": panic_active(),
+                    })
                 await asyncio.sleep(LOOP_INTERVAL)
                 continue
+
+            _heartbeat["note"] = "sinyal taraması"
 
             # ── Sinyal üret ──────────────────────────────────────────────────
             for sym in SYMBOLS:
@@ -1155,7 +1251,8 @@ async def _run_async(testnet: bool) -> None:
                     if len(buf) < 30:
                         broadcast({"phase": "server",
                                    "msg": f"{sym} buffer dolmadı ({len(buf)}/30), bekleniyor"})
-                        await _emit_decision(sym, blocked_by="BUFFER_SHORT", persist=False)
+                        await _emit_decision(sym, blocked_by="BUFFER_SHORT",
+                                             persist=_persist_throttled(sym, "BUFFER_SHORT"))
                         continue
                     df = pd.DataFrame(buf)
                     mbuf = list(_metrics_buffer.get(sym, deque()))
@@ -1165,13 +1262,15 @@ async def _run_async(testnet: bool) -> None:
                     if entry_price is None:
                         broadcast({"phase": "server",
                                    "msg": f"{sym} anlık fiyat henüz yok (WS tick bekleniyor) — atlandı"})
-                        await _emit_decision(sym, blocked_by="NO_PRICE", persist=False)
+                        await _emit_decision(sym, blocked_by="NO_PRICE",
+                                             persist=_persist_throttled(sym, "NO_PRICE"))
                         continue
 
                     if features is None:
                         broadcast({"phase": "server",
                                    "msg": f"{sym} özellikler hesaplanamadı (NaN/eksik veri) — atlandı"})
-                        await _emit_decision(sym, blocked_by="NO_FEATURES", persist=False)
+                        await _emit_decision(sym, blocked_by="NO_FEATURES",
+                                             persist=_persist_throttled(sym, "NO_FEATURES"))
                         continue
 
                     # ── Volatility-Adjusted Threshold ────────────────────────

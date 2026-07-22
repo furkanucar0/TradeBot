@@ -33,5 +33,6 @@ LONG ve SHORT modelleri ayrı proba üretir; eşiği geçen(ler) aday olur. İki
 - Günlük -%1.5 kayıp freni / +%2 kâr kilidi → o gün yeni işlem yok
 - Otomatik yeniden eğitim: **≥20 yeni kapanan işlem VE ≥12 saat ara** (K-13) VEYA **model ≥7 gün eski** (K-29 yaş tetiği — yönsüz piyasada bayatlama önlemi), kayan 45 gün
 - UTC gün dönümünde günlük Telegram raporu (K-16)
+- **Bekçi (K-30):** ana döngü kalp atışı >10 dk kesilirse Telegram uyarısı + `LOOP_STALL` kaydı; retrain kilidi >6 saat askıda kalırsa zorla açılır; trader thread'i beklenmedik ölürse alarm; deploy sonrası paper bot otomatik başlar (`PAPER_AUTOSTART`). Sessiz bloklar (fiyat/özellik yok, global kilit) 10 dk'da bir `decisions`'a iz bırakır — "bot neden işlem açmıyor" sorusu artık DB'den yanıtlanabilir.
 
 İlgili: [[Model-ve-Eğitim]], [[Risk-Yönetimi]]
