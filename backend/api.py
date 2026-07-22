@@ -334,6 +334,119 @@ async def get_health():
     return h
 
 
+# ── Sunucu kaynakları (K-31) ──────────────────────────────────────────────────
+@app.get("/system")
+async def system_resources():
+    """Host CPU/RAM/disk durumu. Konteynerde cgroup limiti yok, bind-mount
+    kullanılıyor → /proc ve disk_usage HOST değerlerini gösterir (istenen de
+    bu: 'sunucu ne kadar kullanılıyor'). Windows yerelde /proc alanları None."""
+    import shutil as _sh
+    out: Dict[str, Any] = {}
+    try:
+        du = _sh.disk_usage(str(Path(__file__).resolve().parent))
+        out["disk_total_gb"] = round(du.total / 2**30, 1)
+        out["disk_free_gb"] = round(du.free / 2**30, 1)
+        out["disk_used_pct"] = round(du.used / du.total * 100, 1)
+    except Exception:
+        pass
+    try:
+        mem = {}
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            k, v = line.split(":", 1)
+            mem[k] = int(v.strip().split()[0])   # kB
+        out["ram_total_gb"] = round(mem["MemTotal"] / 2**20, 2)
+        out["ram_used_gb"] = round((mem["MemTotal"] - mem["MemAvailable"]) / 2**20, 2)
+        out["ram_used_pct"] = round((1 - mem["MemAvailable"] / mem["MemTotal"]) * 100, 1)
+    except Exception:
+        pass
+    try:
+        def _cpu_sample():
+            parts = Path("/proc/stat").read_text().splitlines()[0].split()[1:]
+            vals = [int(p) for p in parts]
+            idle = vals[3] + (vals[4] if len(vals) > 4 else 0)   # idle + iowait
+            return idle, sum(vals)
+        i1, t1 = _cpu_sample()
+        await asyncio.sleep(0.3)
+        i2, t2 = _cpu_sample()
+        out["cpu_pct"] = round((1 - (i2 - i1) / max(t2 - t1, 1)) * 100, 1)
+        out["cpu_cores"] = os.cpu_count()
+        out["load_avg_1m"] = round(os.getloadavg()[0], 2)
+    except Exception:
+        pass
+    return out
+
+
+# ── Araştırma koşusu (K-31): walk-forward ────────────────────────────────────
+_research_state = {"running": False, "last_run_ts": 0.0}
+
+
+def _run_research_thread(reason: str) -> bool:
+    """Walk-forward'ı düşük öncelikli thread'de başlatır. False = başlatılamadı."""
+    if _research_state["running"] or _bot_state["is_training"]:
+        return False
+    _research_state["running"] = True
+
+    def _job():
+        try:
+            import research
+            import telegram_notifier as _tg
+            _push_event({"phase": "server",
+                         "msg": f"🔬 Walk-forward araştırma koşusu başladı ({reason})"})
+            report = research.run_walkforward()
+            _research_state["last_run_ts"] = time.time()
+            _tg.send_async(research.format_telegram_summary(report))
+            _push_event({"phase": "server",
+                         "msg": ("🔬 Walk-forward bitti: "
+                                 f"{report.get('ozet', {}).get('toplam_oos_pnl', '?')} USDT "
+                                 f"({report.get('duration_min', '?')} dk)")})
+        except Exception as e:
+            _push_event({"phase": "error", "msg": f"Araştırma koşusu hatası: {e}"})
+        finally:
+            _research_state["running"] = False
+
+    threading.Thread(target=_job, daemon=True).start()
+    return True
+
+
+@app.post("/research/run")
+async def research_run():
+    """Walk-forward koşusunu elle tetikler (gece otomatiği beklemeden)."""
+    if not _run_research_thread("manuel"):
+        raise HTTPException(400, "Araştırma zaten çalışıyor veya eğitim devam ediyor")
+    return {"status": "started"}
+
+
+@app.get("/research")
+async def research_last():
+    """Son walk-forward raporu."""
+    p = REPORTS_DIR / "walkforward_last.json"
+    if not p.exists():
+        return {"status": "henüz koşu yok"}
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+@app.on_event("startup")
+async def _nightly_research_scheduler():
+    """K-31: her gece 03:15 UTC'de (piyasa ve retrain trafiğinin en sakin anı)
+    walk-forward koşusunu tetikler. Boşta duran sunucu kapasitesi (6 çekirdek,
+    load ~0.1) kanıt üretimine harcanır; koşu nice=10 ile çalışır, canlı botu
+    yavaşlatmaz ve canlı davranışı DEĞİŞTİRMEZ."""
+    def _sched():
+        while True:
+            now = time.gmtime()
+            target = time.mktime((now.tm_year, now.tm_mon, now.tm_mday,
+                                  3, 15, 0, 0, 0, 0))
+            now_s = time.mktime(now)
+            if now_s >= target:
+                target += 86400
+            time.sleep(max(60.0, target - now_s))
+            # son 20 saat içinde koşulduysa atla (çifte tetik koruması)
+            if time.time() - _research_state["last_run_ts"] > 20 * 3600:
+                _run_research_thread("gece otomatiği")
+
+    threading.Thread(target=_sched, daemon=True).start()
+
+
 # ── Google Girişi (K-26) ──────────────────────────────────────────────────────
 @app.get("/auth/config")
 async def auth_config():

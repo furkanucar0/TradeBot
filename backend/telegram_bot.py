@@ -531,6 +531,20 @@ def cmd_status() -> str:
         sign  = "+" if total >= 0 else ""
         lines.append(f"\nSon 5 işlem PnL: {sign}{total:.3f} USDT")
 
+    # K-31: sunucu kaynak durumu — CPU / RAM / kalan disk
+    sysr = _api("get", "/system")
+    if isinstance(sysr, dict) and "error" not in sysr and sysr:
+        lines.append("\n🖥 <b>Sunucu Kaynakları</b>")
+        if sysr.get("cpu_pct") is not None:
+            lines.append(f"CPU: %{sysr['cpu_pct']} "
+                         f"({sysr.get('cpu_cores', '?')} çekirdek, load {sysr.get('load_avg_1m', '?')})")
+        if sysr.get("ram_total_gb"):
+            lines.append(f"RAM: {sysr['ram_used_gb']} / {sysr['ram_total_gb']} GB "
+                         f"(%{sysr['ram_used_pct']})")
+        if sysr.get("disk_free_gb") is not None:
+            lines.append(f"Disk: {sysr['disk_free_gb']} GB boş "
+                         f"(%{sysr['disk_used_pct']} dolu)")
+
     return "\n".join(lines)
 
 
