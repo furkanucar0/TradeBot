@@ -38,6 +38,9 @@ _PYTHON   = sys.executable
 # telegram container'ının İÇİNDE başıboş bir süreç doğurabilir). Bu modda
 # bileşen komutları docker compose'a yönlendiren bilgi mesajı döner.
 _DOCKER_MODE = os.getenv("DOCKER_MODE", "").strip().lower() in ("1", "true", "yes")
+# K-30: /durum'un Docker modunda frontend'i yoklayacağı adres — compose iç
+# ağında servis adı "frontend", nginx iç portu 80
+_FRONTEND_URL = os.getenv("FRONTEND_URL", "http://frontend:80")
 
 _CREATE_NEW = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
 
@@ -449,9 +452,29 @@ def cmd_health() -> str:
 
 
 def cmd_status() -> str:
-    be = "🟢 Açık" if _alive("backend")  else "🔴 Kapalı"
-    fe = "🟢 Açık" if _alive("fetcher") else "🔴 Kapalı"
-    fr = "🟢 Açık" if _alive("frontend") else "🔴 Kapalı"
+    if _DOCKER_MODE:
+        # K-30: _alive() Windows görev/subprocess defterine bakar — Docker'da
+        # bileşenler ayrı container olduğu için defter hep boştur ve her şey
+        # yanlışlıkla "Kapalı" görünüyordu. Gerçek yoklamalar:
+        #   backend  → API yanıt veriyor mu
+        #   fetcher  → HTTP'si yok; kanıtı işi: DB'deki son 1m mum taze mi
+        #   frontend → nginx'e HTTP dokunuşu
+        be = "🟢 Açık" if _api_ready() else "🔴 Kapalı"
+        fe = "🔴 Kapalı"
+        candles = _api("get", "/candles/BTCUSDT?limit=1")
+        if isinstance(candles, list) and candles:
+            age_min = (time.time() - candles[-1].get("time", 0)) / 60
+            # kapanmış mum gecikmeli yazılır: ~2-3 dk yaş normaldir
+            fe = "🟢 Açık" if age_min < 5 else f"🟠 Son mum {age_min:.0f} dk eski"
+        try:
+            _req.get(_FRONTEND_URL, timeout=3)
+            fr = "🟢 Açık"
+        except Exception:
+            fr = "🔴 Kapalı"
+    else:
+        be = "🟢 Açık" if _alive("backend")  else "🔴 Kapalı"
+        fe = "🟢 Açık" if _alive("fetcher") else "🔴 Kapalı"
+        fr = "🟢 Açık" if _alive("frontend") else "🔴 Kapalı"
 
     lines = [
         "📡 <b>Süreç Durumu</b>",
@@ -461,13 +484,23 @@ def cmd_status() -> str:
     ]
 
     if not _api_ready():
-        lines.append("\nAPI yanıt vermiyor — /backend ile başlat.")
+        if _DOCKER_MODE:
+            lines.append("\nAPI yanıt vermiyor — sunucuda kontrol et: "
+                         "<code>docker compose ps</code> / "
+                         "<code>docker compose logs backend</code>")
+        else:
+            lines.append("\nAPI yanıt vermiyor — /backend ile başlat.")
         return "\n".join(lines)
 
     st = _api("get", "/status")
     bot_status = "▶️ Çalışıyor" if st.get("is_running") else "⏹ Durmuş"
     if st.get("is_training"):
         bot_status += " | 🧠 Eğitim var"
+    # K-30: is_running=true ama kalp atışı yaşlıysa döngü askıda demektir —
+    # "Çalışıyor" yazıp susmak 19-21 Tem'deki körlüğün ta kendisiydi
+    _hb = st.get("loop_heartbeat_age_s")
+    if st.get("is_running") and _hb is not None and _hb > 600:
+        bot_status += f" | 🐕 döngü {_hb/60:.0f} dk'dır atmıyor!"
     if st.get("panic"):
         lines.append("\n🚨 <b>PANİK KİLİDİ AKTİF</b> — /panik_kaldir ile kaldır")
 
