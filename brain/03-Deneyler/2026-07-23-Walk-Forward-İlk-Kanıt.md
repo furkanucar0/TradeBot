@@ -24,12 +24,29 @@ tags: [deney, walk-forward, kanıt]
 3. **SHORT/LONG ayrımı katmana göre değişiyor** — "SHORT'u kapat" hipotezi 4-katmanlı ilk koşudaki kadar net değil (2, 3, 6, 12. katmanlarda LONG da kaybetti). Tek yönlü kapatma kararına bu veriyle varılamaz.
 4. Paper'daki 7 işlem/-0.65 USDT ve mainnet kapısının "hayır"ı artık bağımsız bir ölçümle tutarlı.
 
-## Sonraki adım adayları (ön-kayıtlı hipotezler — çoklu-karşılaştırma tuzağına dikkat)
+## Turnuva sonucu (23.07 gecesi, 12 katman, tek eğitim + varyant değerlendirme)
 
-Aynı 12-katman düzeneğinde, HERBİRİ ÖNCEDEN İLAN EDİLİP tek seferde test edilecek:
-- H-A: precision tabanı +%5 → +%10 (daha az ama daha isabetli işlem)
-- H-B: ADX tabanı 20 → 25 (yalnızca güçlü trendde)
-- H-C: araştırma eşiğine canlıdaki SIGNAL_MARGIN(+0.07) eklenmesi (canlı seçiciliğin tam simülasyonu)
-- Varyant OOS'ta tutarlı artıya dönmüyorsa canlı parametre DEĞİŞMEZ; "yeşile kadar deneme" yasağı burada da geçerli.
+Ön-kayıtlı hipotezler + kullanıcının 15m grid gözlemi (R_range15m: BB(20,2)+RSI(14) banttan dönüş, SADECE ADX<20 rejimi, SL %0.4 / TP %0.6, tek konfig, tarama yok) aynı OOS haftalarında yarıştı:
+
+| Yarışmacı | 12 hafta OOS | İşlem | + hafta |
+|---|---|---|---|
+| R_range15m | **-20.29** | 114 | 1/12 |
+| H-A_prec10 | -29.03 | 647 | 3/12 |
+| H-C_margin7 | -33.44 | 731 | 2/12 |
+| temel | -35.42 | 848 | 3/12 |
+| H-B_adx25 | -36.72 | 617 | 2/12 |
+
+**Okumalar:**
+1. **Hiçbir eşik/filtre ayarı işareti çevirmiyor** — sorun ayar değil, çekirdek kenar. H-A (+%10 precision tabanı) temele göre +6.4 iyileştirme sağlıyor ama yön aynı.
+2. **Kayıp ~işlem sayısıyla orantılı** → maliyet baskın: komisyon+slippage gidiş-dönüş ~%0.13, TP %0.6-1.0'ın %13-22'si. 1m scalping'te kenar maliyetin altında.
+3. **R_range15m** en az kaybeden ama artı değil (WR ~%30, başabaş ~%46). Kullanıcının grid sezgisinin BU kaba hâli maliyeti yenmiyor; gerçek grid (kademeli emir, envanter, SL'siz) farklı bir hayvan — bu sonuç "range'de para yok" demek DEĞİL, "bu basit versiyon yetmiyor" demek.
+4. Varyant OOS'ta tutarlı artıya dönmediği için canlı parametre DEĞİŞMEDİ ("yeşile kadar deneme" yasağı uygulandı).
+
+## Tur-2 adayları (ön-kayıt bekliyor — kullanıcı seçimi)
+
+Maliyet-baskınlığı bulgusuna doğrudan saldıran hipotezler:
+- **H-D · Zaman dilimi yükseltme:** 15m mumlarla etiket/eğitim, SL %1 / TP %2 civarı (maliyet TP'nin ~%6'sına düşer)
+- **H-E · Maker giriş simülasyonu:** limit emirle giriş varsayımı (komisyon yarıya) — brain B-4/H-7'nin araştırma modu
+- **H-F · Grid-gerçek:** kademeli çift yön emirler, envanter yönetimi (en karmaşık; ayrı motor ister)
 
 İlgili: [[Kararlar-Kaydı]] K-31, [[Model-ve-Eğitim]]
