@@ -43,6 +43,23 @@ MAX_FOLDS = 4      # gecelik koşu ~20-40 dk kalsın diye üst sınır
 
 _MS_DAY = 86_400_000
 
+# ── Turnuva varyantları (2026-07-23 deney notundaki ÖN-KAYITLI hipotezler) ────
+# Hepsi AYNI eğitilmiş modelleri paylaşır (fark sadece eşik/filtre) → turnuva
+# tek eğitim maliyetine koşar. prec_bump: precision tabanı tamponu (canlı 0.05);
+# adx_floor: OOS'ta uygulanan ADX maskesi; extra_margin: canlı SIGNAL_MARGIN
+# benzeri, seçilen eşiğin ÜSTÜNE tahmin anında eklenir.
+VARIANTS = [
+    {"ad": "temel",       "prec_bump": 0.05, "adx_floor": 20, "extra_margin": 0.0},
+    {"ad": "H-A_prec10",  "prec_bump": 0.10, "adx_floor": 20, "extra_margin": 0.0},
+    {"ad": "H-B_adx25",   "prec_bump": 0.05, "adx_floor": 25, "extra_margin": 0.0},
+    {"ad": "H-C_margin7", "prec_bump": 0.05, "adx_floor": 20, "extra_margin": 0.07},
+]
+
+# R-baseline (15m range-fade) ön-kayıtlı parametreleri — kullanıcının "15m'de
+# gridlenebilir alanlar var" gözleminin kural-bazlı, MODELSİZ testi. Tek
+# konfigürasyon, ayar taraması YOK (tarama = çoklu-karşılaştırma tuzağı).
+RANGE_SL, RANGE_TP = 0.004, 0.006   # mean-reversion tipik R:R 1.5
+
 
 def _pick_threshold(proba: np.ndarray, y_true: np.ndarray,
                     net_tp: float, net_sl: float, min_prec: float) -> float:
@@ -62,6 +79,55 @@ def _pick_threshold(proba: np.ndarray, y_true: np.ndarray,
         if total_ev > best_ev:
             best_ev, best_thr = total_ev, thr
     return best_thr if best_thr is not None else 1.01
+
+
+def _range_fade_fold(df_oos: pd.DataFrame) -> Dict[str, Any]:
+    """R-baseline: 15m Bollinger dönüş kuralı — SADECE ADX<20 (yatay) rejimde,
+    yani ML stratejisinin bilerek oynamadığı saatlerde. Sinyal bir ÖNCEKİ
+    kapanmış 15m bardan (bar içi lookahead yok), giriş sinyal barının
+    kapanışında (backtest'in standart konvansiyonu)."""
+    import ta as _ta
+    frames = {"LONG": [], "SHORT": []}
+    for sym, g in df_oos.groupby("symbol"):
+        g = g.sort_values("timestamp")
+        idx = pd.to_datetime(g["timestamp"], unit="ms")
+        g15 = (g.set_index(idx)
+                .resample("15min")
+                .agg(open=("open", "first"), high=("high", "max"),
+                     low=("low", "min"), close=("close", "last"),
+                     h1_adx=("h1_adx", "last"))
+                .dropna())
+        if len(g15) < 25:
+            continue
+        bb = _ta.volatility.BollingerBands(g15["close"], window=20, window_dev=2)
+        rsi = _ta.momentum.RSIIndicator(g15["close"], window=14).rsi()
+        ranging = g15["h1_adx"] < ADX_RANGING_FLOOR
+        long_sig = ((g15["close"] <= bb.bollinger_lband()) & (rsi < 30) & ranging).shift(1)
+        short_sig = ((g15["close"] >= bb.bollinger_hband()) & (rsi > 70) & ranging).shift(1)
+        base = g15.reset_index(drop=True)
+        base["timestamp"] = (g15.index.astype("int64") // 10**6).values
+        base["symbol"] = sym
+        for sig, direction in ((long_sig, "LONG"), (short_sig, "SHORT")):
+            d = base.copy()
+            d["_sig"] = sig.fillna(False).astype(int).values
+            frames[direction].append(d)
+
+    out = {"pnl": 0.0, "trades": 0, "wins": 0}
+    for direction, lst in frames.items():
+        if not lst:
+            continue
+        d = pd.concat(lst).sort_values("timestamp").reset_index(drop=True)
+        preds = d["_sig"].values
+        if preds.sum() == 0:
+            continue
+        # sabit 0.60 proba → Kelly ölçeği nötr (kural stratejisinde olasılık yok)
+        proba = np.where(preds == 1, 0.60, 0.0)
+        bt = train_engine.backtest(d, preds, proba, RANGE_SL, RANGE_TP,
+                                   direction=direction)
+        out["pnl"] = round(out["pnl"] + bt["total_pnl"], 4)
+        out["trades"] += bt["trades"]
+        out["wins"] += bt["wins"]
+    return out
 
 
 def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
@@ -132,36 +198,59 @@ def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
             "sl_pct": sl, "tp_pct": tp,
             "window_rows": len(df_w), "oos_rows": len(df_oos),
         }
-        # Canlı zincirin baskın filtresi: 1h ADX < taban → sinyal iptal (K-13).
-        # Ham model sinyali ile ADX-filtreli sinyali AYRI AYRI ölçüyoruz —
-        # fark, canlıdaki yatay-piyasa freninin kaç para kurtardığının kanıtı.
-        adx_ok = (df_oos["h1_adx"] >= ADX_RANGING_FLOOR).astype(int).values
-
+        # ── Eğitim: yön başına BİR kez — tüm varyantlar bu modelleri paylaşır
+        # (fark sadece eşik/filtre; turnuva tek eğitim maliyetine koşar)
+        trained: Dict[str, Dict[str, np.ndarray]] = {}
         for direction in ("LONG", "SHORT"):
             # df_test parametresine OOS verilir: train_model test setine hiç
             # bakmadan eğitir, proba_test bize hazır OOS olasılıkları döner
             model, y_val, proba_val, y_oos, proba_oos = train_engine.train_model(
                 df_train, df_val, df_oos, labels, direction)
-            thr = _pick_threshold(proba_val, y_val, net_tp, net_sl, min_prec)
-            y_pred_oos = (proba_oos >= thr).astype(int)
-            bt = train_engine.backtest(df_oos, y_pred_oos, proba_oos, sl, tp,
-                                       direction=direction)
-            bt_adx = train_engine.backtest(df_oos, y_pred_oos * adx_ok,
-                                           proba_oos, sl, tp, direction=direction)
-            fold[direction.lower()] = {
-                "thr": thr,
-                "oos_trades": bt["trades"],
-                "oos_pnl": bt["total_pnl"],
-                "oos_wr": bt["win_rate"],
-                "oos_max_dd": bt["max_drawdown"],
-                "adx_trades": bt_adx["trades"],
-                "adx_pnl": bt_adx["total_pnl"],
-                "adx_wr": bt_adx["win_rate"],
-            }
-        fold["oos_pnl_toplam"] = round(
-            fold["long"]["oos_pnl"] + fold["short"]["oos_pnl"], 4)
-        fold["adx_pnl_toplam"] = round(
-            fold["long"]["adx_pnl"] + fold["short"]["adx_pnl"], 4)
+            trained[direction] = {"y_val": y_val, "proba_val": proba_val,
+                                  "proba_oos": proba_oos}
+
+        # ── Varyant turnuvası (VARIANTS ön-kayıtlı; canlı zincir yaklaşımı =
+        # her varyant kendi ADX maskesiyle). "temel" varyantın ham hâli de
+        # ölçülür (önceki raporlarla süreklilik + ADX freninin kazancı).
+        fold["varyant"] = {}
+        for v in VARIANTS:
+            v_min_prec = max(MIN_DIRECTION_PREC, net_sl / (net_tp + net_sl) + v["prec_bump"])
+            v_adx_ok = (df_oos["h1_adx"] >= v["adx_floor"]).astype(int).values
+            v_pnl = v_pnl_ham = 0.0
+            v_tr = v_tr_ham = 0
+            per_dir = {}
+            for direction in ("LONG", "SHORT"):
+                t = trained[direction]
+                thr = _pick_threshold(t["proba_val"], t["y_val"],
+                                      net_tp, net_sl, v_min_prec)
+                y_pred = (t["proba_oos"] >= thr + v["extra_margin"]).astype(int)
+                bt_ham = train_engine.backtest(df_oos, y_pred, t["proba_oos"],
+                                               sl, tp, direction=direction)
+                bt_flt = train_engine.backtest(df_oos, y_pred * v_adx_ok,
+                                               t["proba_oos"], sl, tp,
+                                               direction=direction)
+                v_pnl_ham += bt_ham["total_pnl"]; v_tr_ham += bt_ham["trades"]
+                v_pnl += bt_flt["total_pnl"];     v_tr += bt_flt["trades"]
+                per_dir[direction.lower()] = {"thr": thr,
+                                              "pnl": bt_flt["total_pnl"],
+                                              "trades": bt_flt["trades"],
+                                              "wr": bt_flt["win_rate"]}
+            fold["varyant"][v["ad"]] = {"pnl": round(v_pnl, 4), "trades": v_tr,
+                                        "pnl_ham": round(v_pnl_ham, 4),
+                                        "trades_ham": v_tr_ham, **per_dir}
+
+        # Eski rapor şemasıyla süreklilik: temel varyantın ham/ADX değerleri
+        base_v = fold["varyant"]["temel"]
+        for dl in ("long", "short"):
+            fold[dl] = {"thr": base_v[dl]["thr"], "oos_trades": base_v[dl]["trades"],
+                        "oos_pnl": base_v[dl]["pnl"], "oos_wr": base_v[dl]["wr"],
+                        "adx_trades": base_v[dl]["trades"], "adx_pnl": base_v[dl]["pnl"],
+                        "adx_wr": base_v[dl]["wr"]}
+        fold["oos_pnl_toplam"] = base_v["pnl_ham"]
+        fold["adx_pnl_toplam"] = base_v["pnl"]
+
+        # ── R-baseline: kullanıcının 15m grid gözlemi — modelsiz kural testi
+        fold["range_15m"] = _range_fade_fold(df_oos)
         fold_results.append(fold)
 
     total_pnl = round(sum(f["oos_pnl_toplam"] for f in fold_results), 4)
@@ -170,6 +259,22 @@ def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
     total_trades_adx = sum(f[d]["adx_trades"] for f in fold_results for d in ("long", "short"))
     pos_folds = sum(1 for f in fold_results if f["oos_pnl_toplam"] > 0)
     pos_folds_adx = sum(1 for f in fold_results if f["adx_pnl_toplam"] > 0)
+
+    # Turnuva sıralaması (varyantlar + R-baseline) — hepsi aynı OOS haftaları
+    turnuva: Dict[str, Any] = {}
+    for v in VARIANTS:
+        pnls = [f["varyant"][v["ad"]]["pnl"] for f in fold_results]
+        turnuva[v["ad"]] = {
+            "toplam_pnl": round(sum(pnls), 4),
+            "islem": sum(f["varyant"][v["ad"]]["trades"] for f in fold_results),
+            "pozitif_fold": sum(1 for p in pnls if p > 0),
+        }
+    r_pnls = [f["range_15m"]["pnl"] for f in fold_results]
+    turnuva["R_range15m"] = {
+        "toplam_pnl": round(sum(r_pnls), 4),
+        "islem": sum(f["range_15m"]["trades"] for f in fold_results),
+        "pozitif_fold": sum(1 for p in r_pnls if p > 0),
+    }
 
     report = {
         "ran_at_utc": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
@@ -186,6 +291,7 @@ def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
             "adx_toplam_pnl": total_pnl_adx,
             "adx_toplam_islem": total_trades_adx,
         },
+        "turnuva": turnuva,
     }
     REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
     REPORT_PATH.write_text(json.dumps(report, indent=2, ensure_ascii=False),
@@ -203,18 +309,16 @@ def format_telegram_summary(report: Dict[str, Any]) -> str:
         f"görülmemiş gelecek, {o['fold_sayisi']} katman, {report['duration_min']} dk)",
         "",
     ]
-    for f in report["folds"]:
-        sign = "🟢" if f["adx_pnl_toplam"] > 0 else "🔴"
-        lines.append(
-            f"{sign} {f['train_end_utc']} sonrası 7g: "
-            f"ham <b>{f['oos_pnl_toplam']:+.2f}</b> | "
-            f"ADX filtreli <b>{f['adx_pnl_toplam']:+.2f} USDT</b>")
+    lines.append("🏆 <b>Turnuva</b> (aynı OOS haftaları, toplam PnL):")
+    siralama = sorted(report.get("turnuva", {}).items(),
+                      key=lambda kv: kv[1]["toplam_pnl"], reverse=True)
+    for ad, t in siralama:
+        sign = "🟢" if t["toplam_pnl"] > 0 else "🔴"
+        lines.append(f"{sign} {ad}: <b>{t['toplam_pnl']:+.2f} USDT</b> "
+                     f"({t['islem']} işlem, {t['pozitif_fold']}/{o['fold_sayisi']} hafta +)")
     lines += [
         "",
-        f"Ham model: {o['toplam_oos_pnl']:+.2f} USDT ({o['toplam_oos_islem']} işlem, "
-        f"{o['pozitif_fold']}/{o['fold_sayisi']} katman +)",
-        f"ADX filtreli (canlı zincir): <b>{o['adx_toplam_pnl']:+.2f} USDT</b> "
-        f"({o['adx_toplam_islem']} işlem, {o['adx_pozitif_fold']}/{o['fold_sayisi']} katman +)",
+        f"Temel ham: {o['toplam_oos_pnl']:+.2f} | ADX'li: {o['adx_toplam_pnl']:+.2f} USDT",
         "ℹ️ Rapor kanıttır — canlı model DEĞİŞMEDİ.",
     ]
     return "\n".join(lines)
