@@ -420,6 +420,9 @@ async def _run_async(testnet: bool) -> None:
     _heartbeat["note"] = "başlatılıyor"
 
     model_payload = _load_model()
+    # K-32: yüklü modelin dosya damgası — ana döngü her turda diskle kıyaslar,
+    # dış eğitim (API /train) yeni şampiyon yazarsa sıcak yükleme yapılır
+    _model_mtime = MODEL_PATH.stat().st_mtime if MODEL_PATH.exists() else 0.0
     sl_pct: float = model_payload.get("sl_pct", 0.005)
     tp_pct: float = model_payload.get("tp_pct", 0.015)
     bidir  = model_payload.get("direction", "LONG") == "BIDIR"
@@ -489,7 +492,7 @@ async def _run_async(testnet: bool) -> None:
 
         def _retrain():
             global _model_updating
-            nonlocal model_payload, sl_pct, tp_pct
+            nonlocal model_payload, sl_pct, tp_pct, _model_mtime
             _model_updating = True
             try:
                 import train_engine
@@ -511,6 +514,7 @@ async def _run_async(testnet: bool) -> None:
                     )
                 elif MODEL_PATH.exists():
                     model_payload = _load_model()
+                    _model_mtime = MODEL_PATH.stat().st_mtime   # K-32: çifte yükleme olmasın
                     # yeni modelin SL/TP'sini de devral
                     sl_pct = model_payload.get("sl_pct", sl_pct)
                     tp_pct = model_payload.get("tp_pct", tp_pct)
@@ -1216,6 +1220,28 @@ async def _run_async(testnet: bool) -> None:
                 break
 
             open_syms = list(demo_positions.keys()) if paper_mode else []
+
+            # K-32: dış eğitimle (API /train) yenilenen model.bin'i sıcak yükle.
+            # Eski davranış: /train yeni şampiyonu DİSKE yazar ama çalışan
+            # trader bellekteki eski payload'la taramaya devam ederdi —
+            # 25 Tem olayı: yassı 0.37-proba model, taze şampiyon diskte
+            # dururken restart'a kadar taramada kalacaktı.
+            try:
+                _mt = MODEL_PATH.stat().st_mtime if MODEL_PATH.exists() else 0.0
+                if _mt and _mt != _model_mtime and not _model_updating:
+                    _model_mtime = _mt
+                    model_payload = _load_model()
+                    sl_pct = model_payload.get("sl_pct", sl_pct)
+                    tp_pct = model_payload.get("tp_pct", tp_pct)
+                    bidir = model_payload.get("direction", "LONG") == "BIDIR"
+                    broadcast({"phase": "server",
+                               "msg": (f"Model diskten yenilendi (dış eğitim algılandı) | "
+                                       f"SL={sl_pct*100:.1f}% TP={tp_pct*100:.1f}%")})
+                    tg.send_async(f"🔄 <b>Model Yenilendi</b>\n"
+                                  f"Yeni şampiyon canlı taramada | "
+                                  f"SL %{sl_pct*100:.1f} TP %{tp_pct*100:.1f}")
+            except Exception:
+                pass
 
             # K-29: yaş tetiği işlemsiz dönemlerde de kontrol edilsin — sadece
             # işlem kapanışında kontrol edilseydi, piyasa işlem üretmezken

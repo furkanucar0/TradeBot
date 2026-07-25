@@ -36,6 +36,7 @@ Doğrulamada **beklenen toplam net PnL maksimizasyonu (K-15)**: sinyal sayısı 
   - **İşlem tetiği:** ≥20 yeni kapanan paper işlem + ≥12 saat ara
   - **Yaş tetiği:** model.bin ≥7 gün eski (`RETRAIN_MAX_AGE_DAYS`) + ≥12 saat ara — yönsüz piyasada işlem-sayısı tetiği hiç ateşlenmediği için bayatlama önlemi. DİKKAT: yaş tetiği ana sinyal döngüsünde de kontrol edilir (sadece işlem kapanışında kontrol edilseydi işlemsiz dönemde hiç çalışmazdı); 12s gap guard'ı C-v-C reddi sonrası retrain fırtınasını engeller (red, mtime'ı değiştirmez)
 - Eğitim sırasında yeni pozisyon açılmaz; yeni SL/TP devralınır
+- **Dış eğitim sıcak yüklenir (K-32):** API `/train` diske yeni şampiyon yazarsa ana döngü mtime değişiminden algılar ve payload'ı yeniden yükler — eskiden reload sadece iç retrain yolundaydı, çalışan bot restart'a kadar bayat modelle tarıyordu
 - Her eğitim `model_runs` tablosuna + [[Eğitim-Günlüğü]]'ne kaydolur
 
 ## Champion vs Challenger (K-22 — 05.07)
