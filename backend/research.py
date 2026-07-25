@@ -53,6 +53,11 @@ VARIANTS = [
     {"ad": "H-A_prec10",  "prec_bump": 0.10, "adx_floor": 20, "extra_margin": 0.0},
     {"ad": "H-B_adx25",   "prec_bump": 0.05, "adx_floor": 25, "extra_margin": 0.0},
     {"ad": "H-C_margin7", "prec_bump": 0.05, "adx_floor": 20, "extra_margin": 0.07},
+    # H-G (26.07, "düşen piyasada hiç short yok" olayı): precision kapısı
+    # TAMAMEN kapalı — eşik sadece EV-maks ile seçilir. Kapının 12 haftada
+    # kaç para kurtardığının/kaçırdığının doğrudan ölçümü. prec_bump<0 özel
+    # değeri "taban yok" demektir.
+    {"ad": "H-G_kapisiz", "prec_bump": -1.0, "adx_floor": 20, "extra_margin": 0.0},
 ]
 
 # R-baseline (15m range-fade) ön-kayıtlı parametreleri — kullanıcının "15m'de
@@ -214,7 +219,9 @@ def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
         # ölçülür (önceki raporlarla süreklilik + ADX freninin kazancı).
         fold["varyant"] = {}
         for v in VARIANTS:
-            v_min_prec = max(MIN_DIRECTION_PREC, net_sl / (net_tp + net_sl) + v["prec_bump"])
+            # prec_bump < 0 → precision tabanı YOK (H-G): eşik salt EV-maks
+            v_min_prec = (0.0 if v["prec_bump"] < 0 else
+                          max(MIN_DIRECTION_PREC, net_sl / (net_tp + net_sl) + v["prec_bump"]))
             v_adx_ok = (df_oos["h1_adx"] >= v["adx_floor"]).astype(int).values
             v_pnl = v_pnl_ham = 0.0
             v_tr = v_tr_ham = 0

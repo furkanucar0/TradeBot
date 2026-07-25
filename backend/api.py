@@ -380,7 +380,7 @@ async def system_resources():
 _research_state = {"running": False, "last_run_ts": 0.0}
 
 
-def _run_research_thread(reason: str, folds: int = 8) -> bool:
+def _run_research_thread(reason: str, folds: int = 8, oos_days: int = 7) -> bool:
     """Walk-forward'ı düşük öncelikli thread'de başlatır. False = başlatılamadı.
     DB'de ~13 aylık veri var → varsayılan 8 katman (~2 ay geriye); /research/run
     ile 24'e kadar derinleştirilebilir (fold başına ~2 dk, nice=10)."""
@@ -394,7 +394,7 @@ def _run_research_thread(reason: str, folds: int = 8) -> bool:
             import telegram_notifier as _tg
             _push_event({"phase": "server",
                          "msg": f"🔬 Walk-forward araştırma koşusu başladı ({reason}, {folds} katman)"})
-            report = research.run_walkforward(max_folds=folds)
+            report = research.run_walkforward(max_folds=folds, oos_days=oos_days)
             _research_state["last_run_ts"] = time.time()
             _tg.send_async(research.format_telegram_summary(report))
             _push_event({"phase": "server",
@@ -411,13 +411,15 @@ def _run_research_thread(reason: str, folds: int = 8) -> bool:
 
 
 @app.post("/research/run")
-async def research_run(folds: int = 8):
+async def research_run(folds: int = 8, oos: int = 7):
     """Walk-forward koşusunu elle tetikler (gece otomatiği beklemeden).
-    folds: katman sayısı (1-24; her katman 7 gün geriye gider)."""
+    folds: katman sayısı (1-24). oos: katman başına OOS gün sayısı (2-14) —
+    oos=3, '3 günde bir retrain olsaydı' (H-H) ritmini simüle eder."""
     folds = max(1, min(folds, 24))
-    if not _run_research_thread("manuel", folds):
+    oos = max(2, min(oos, 14))
+    if not _run_research_thread("manuel", folds, oos):
         raise HTTPException(400, "Araştırma zaten çalışıyor veya eğitim devam ediyor")
-    return {"status": "started", "folds": folds}
+    return {"status": "started", "folds": folds, "oos_days": oos}
 
 
 @app.get("/research")
