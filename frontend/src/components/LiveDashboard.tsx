@@ -4,7 +4,7 @@ import CandleChart from './CandleChart'
 import ModelMetrics from './ModelMetrics'
 import TradeHistory from './TradeHistory'
 import {
-  clearPanic, fetchBacktest, fetchStatus, panicBot, startBot, stopBot, triggerTrain,
+  clearPanic, fetchBacktest, fetchEquityCurve, fetchStatus, panicBot, startBot, stopBot, triggerTrain,
   type BacktestSummary, type BotStatus,
 } from '../api'
 import { apiHeaders, API_BASE, wsUrl } from '../apiConfig'
@@ -99,12 +99,21 @@ export default function LiveDashboard() {
     return () => clearInterval(id)
   }, [])
 
+  // Equity PNG'si auth ister; <img> header taşıyamadığı için blob'la çekilir
+  const loadEquity = () =>
+    fetchEquityCurve()
+      .then(url => setEquityUrl(prev => {
+        if (prev) URL.revokeObjectURL(prev)
+        return url
+      }))
+      .catch(() => null)
+
   // Backtest sonucu (sayfa açılışında)
   useEffect(() => {
     fetchBacktest()
       .then(d => {
         setSummary(d)
-        setEquityUrl(`${API_BASE}/reports/equity_curve.png?t=${Date.now()}`)
+        loadEquity()
       })
       .catch(() => null)
   }, [])
@@ -153,7 +162,7 @@ export default function LiveDashboard() {
         setProgress({ msg: ev.msg || 'Backtest...', pct: ev.progress || 90 })
         if (ev.summary) {
           setSummary(ev.summary)
-          setEquityUrl(`${API_BASE}/reports/equity_curve.png?t=${Date.now()}`)
+          loadEquity()
         }
       } else if (phase === 'complete') {
         setProgress({ msg: ev.msg || 'Tamamlandı', pct: 100 })
@@ -163,7 +172,7 @@ export default function LiveDashboard() {
         fetchBacktest()
           .then(d => {
             setSummary(d)
-            setEquityUrl(`${API_BASE}/reports/equity_curve.png?t=${Date.now()}`)
+            loadEquity()
           })
           .catch(() => null)
       } else if (phase === 'signal') {

@@ -79,6 +79,12 @@ export const fetchPositions = () => api.get<Trade[]>('/positions').then(r => r.d
 export const fetchTrades = (limit = 100, offset = 0) =>
   api.get<Trade[]>(`/trades?limit=${limit}&offset=${offset}`).then(r => r.data)
 export const fetchBacktest = () => api.get<BacktestSummary>('/backtest').then(r => r.data)
+// <img src> auth header taşıyamaz (K-24 sonrası /reports 401 dönüyordu →
+// dashboard'da kırık resim). PNG yetkili istekle blob çekilir, tarayıcı-yerel
+// object URL döndürülür — çağıran eski URL'i revokeObjectURL ile bırakmalı.
+export const fetchEquityCurve = () =>
+  api.get(`/reports/equity_curve.png?t=${Date.now()}`, { responseType: 'blob' })
+    .then(r => URL.createObjectURL(r.data as Blob))
 export const triggerTrain = () => api.post('/train').then(r => r.data)
 export const startBot = (testnet = true) => api.post(`/bot/start?testnet=${testnet}`).then(r => r.data)
 export const stopBot = () => api.post('/bot/stop').then(r => r.data)
