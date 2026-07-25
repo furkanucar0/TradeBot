@@ -380,7 +380,8 @@ async def system_resources():
 _research_state = {"running": False, "last_run_ts": 0.0}
 
 
-def _run_research_thread(reason: str, folds: int = 8, oos_days: int = 7) -> bool:
+def _run_research_thread(reason: str, folds: int = 8, oos_days: int = 7,
+                         tf: int = 1) -> bool:
     """Walk-forward'ı düşük öncelikli thread'de başlatır. False = başlatılamadı.
     DB'de ~13 aylık veri var → varsayılan 8 katman (~2 ay geriye); /research/run
     ile 24'e kadar derinleştirilebilir (fold başına ~2 dk, nice=10)."""
@@ -393,8 +394,16 @@ def _run_research_thread(reason: str, folds: int = 8, oos_days: int = 7) -> bool
             import research
             import telegram_notifier as _tg
             _push_event({"phase": "server",
-                         "msg": f"🔬 Walk-forward araştırma koşusu başladı ({reason}, {folds} katman)"})
-            report = research.run_walkforward(max_folds=folds, oos_days=oos_days)
+                         "msg": f"🔬 Walk-forward araştırma koşusu başladı ({reason}, {folds} katman, {tf}m)"})
+            if tf > 1:
+                # H-D: 15m çerçeve — ön-kayıtlı sabit SL %1 / TP %2, 45g pencere
+                # (1m'deki ısınma/etkin-pencere kısıtı burada geçerli değil;
+                # amaç canlıyı taklit değil, yeni çerçevenin kenar ölçümü)
+                report = research.run_walkforward(
+                    window_days=45, max_folds=folds, oos_days=oos_days,
+                    bar_minutes=tf, fixed_sl=0.01, fixed_tp=0.02)
+            else:
+                report = research.run_walkforward(max_folds=folds, oos_days=oos_days)
             _research_state["last_run_ts"] = time.time()
             _tg.send_async(research.format_telegram_summary(report))
             _push_event({"phase": "server",
@@ -411,21 +420,25 @@ def _run_research_thread(reason: str, folds: int = 8, oos_days: int = 7) -> bool
 
 
 @app.post("/research/run")
-async def research_run(folds: int = 8, oos: int = 7):
+async def research_run(folds: int = 8, oos: int = 7, tf: int = 1):
     """Walk-forward koşusunu elle tetikler (gece otomatiği beklemeden).
     folds: katman sayısı (1-24). oos: katman başına OOS gün sayısı (2-14) —
-    oos=3, '3 günde bir retrain olsaydı' (H-H) ritmini simüle eder."""
+    oos=3, '3 günde bir retrain olsaydı' (H-H) ritmini simüle eder.
+    tf: bar dakikası (1 veya 15) — tf=15, H-D 15m çerçeve koşusudur."""
     folds = max(1, min(folds, 24))
     oos = max(2, min(oos, 14))
-    if not _run_research_thread("manuel", folds, oos):
+    if tf not in (1, 15):
+        raise HTTPException(400, "tf 1 veya 15 olmalı")
+    if not _run_research_thread("manuel", folds, oos, tf):
         raise HTTPException(400, "Araştırma zaten çalışıyor veya eğitim devam ediyor")
-    return {"status": "started", "folds": folds, "oos_days": oos}
+    return {"status": "started", "folds": folds, "oos_days": oos, "tf": tf}
 
 
 @app.get("/research")
-async def research_last():
-    """Son walk-forward raporu."""
-    p = REPORTS_DIR / "walkforward_last.json"
+async def research_last(tf: int = 1):
+    """Son walk-forward raporu. tf=15 → H-D 15m çerçeve raporu."""
+    name = "walkforward_last.json" if tf == 1 else f"walkforward_{tf}m_last.json"
+    p = REPORTS_DIR / name
     if not p.exists():
         return {"status": "henüz koşu yok"}
     return json.loads(p.read_text(encoding="utf-8"))

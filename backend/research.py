@@ -86,6 +86,24 @@ def _pick_threshold(proba: np.ndarray, y_true: np.ndarray,
     return best_thr if best_thr is not None else 1.01
 
 
+def _resample_bars(df: pd.DataFrame, minutes: int) -> pd.DataFrame:
+    """1m OHLCV'yi N-dakikalık barlara toplar (H-D: 15m çerçeve testi)."""
+    out = []
+    for sym, g in df.groupby("symbol"):
+        g = g.sort_values("timestamp")
+        idx = pd.to_datetime(g["timestamp"], unit="ms")
+        r = (g.set_index(idx)
+              .resample(f"{minutes}min")
+              .agg(open=("open", "first"), high=("high", "max"),
+                   low=("low", "min"), close=("close", "last"),
+                   volume=("volume", "sum"))
+              .dropna())
+        r["timestamp"] = r.index.astype("int64") // 10**6
+        r["symbol"] = sym
+        out.append(r.reset_index(drop=True))
+    return pd.concat(out, ignore_index=True)
+
+
 def _range_fade_fold(df_oos: pd.DataFrame) -> Dict[str, Any]:
     """R-baseline: 15m Bollinger dönüş kuralı — SADECE ADX<20 (yatay) rejimde,
     yani ML stratejisinin bilerek oynamadığı saatlerde. Sinyal bir ÖNCEKİ
@@ -136,8 +154,16 @@ def _range_fade_fold(df_oos: pd.DataFrame) -> Dict[str, Any]:
 
 
 def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
-                    max_folds: int = MAX_FOLDS) -> Dict[str, Any]:
-    """Walk-forward koşusunu çalıştırır ve rapor sözlüğünü döner + JSON'a yazar."""
+                    max_folds: int = MAX_FOLDS, bar_minutes: int = 1,
+                    fixed_sl: Optional[float] = None,
+                    fixed_tp: Optional[float] = None) -> Dict[str, Any]:
+    """Walk-forward koşusunu çalıştırır ve rapor sözlüğünü döner + JSON'a yazar.
+
+    bar_minutes>1 (H-D): tüm hat N-dakikalık barlarda çalışır — aynı
+    indikatörler daha kaba zaman ölçeğinde hesaplanır, SL/TP sabit verilir
+    (grid atlanır; ön-kayıt disiplini: tarama = çoklu-karşılaştırma tuzağı).
+    Amaç maliyet oranını değiştirmek: 1m'de maliyet TP'nin ~%15-20'si,
+    15m + TP %2'de ~%6'sı."""
     t0 = time.time()
     # Düşük öncelik: canlı bot/API ile CPU yarışmasın (Linux; Windows'ta atla)
     try:
@@ -148,6 +174,8 @@ def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
     df = train_engine.load_data(days=0)
     if df.empty:
         return {"error": "veri yok"}
+    if bar_minutes > 1:
+        df = _resample_bars(df, bar_minutes)
     metrics_df = train_engine.load_market_metrics()
     # Özellikler TÜM veride bir kez hesaplanır (indikatörler geriye bakışlı —
     # sızıntı yok) → fold başına 1d-ısınma kaybı yaşanmaz
@@ -183,9 +211,12 @@ def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
 
         df_train, df_val, df_test_w = train_engine.split_train_val_test(df_w)
 
-        # Grid search pencere içi train+val'de (canlı main() ile aynı disiplin)
-        df_pretest = pd.concat([df_train, df_val])
-        sl, tp, _, _, _ = train_engine.grid_search_rr(df_pretest)
+        if fixed_sl is not None and fixed_tp is not None:
+            sl, tp = fixed_sl, fixed_tp   # H-D: ön-kayıtlı sabit kombo, grid yok
+        else:
+            # Grid search pencere içi train+val'de (canlı main() ile aynı disiplin)
+            df_pretest = pd.concat([df_train, df_val])
+            sl, tp, _, _, _ = train_engine.grid_search_rr(df_pretest)
 
         # Etiketler: pencere ve OOS AYRI AYRI — pencere-sonu etiketleri OOS
         # fiyatlarını göremez (görseydi eğitime gelecek sızardı)
@@ -287,7 +318,9 @@ def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
         "ran_at_utc": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
         "duration_min": round((time.time() - t0) / 60, 1),
         "params": {"window_days": window_days, "oos_days": oos_days,
-                   "avail_days": round(avail_days, 1)},
+                   "avail_days": round(avail_days, 1),
+                   "bar_minutes": bar_minutes,
+                   "fixed_sl": fixed_sl, "fixed_tp": fixed_tp},
         "folds": fold_results,
         "ozet": {
             "fold_sayisi": len(fold_results),
@@ -300,9 +333,12 @@ def run_walkforward(window_days: int = WINDOW_DAYS, oos_days: int = OOS_DAYS,
         },
         "turnuva": turnuva,
     }
-    REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    REPORT_PATH.write_text(json.dumps(report, indent=2, ensure_ascii=False),
-                           encoding="utf-8")
+    # H-D koşusu ayrı dosyaya yazar — gece 1m otomatiğinin raporunu ezmesin
+    out_path = (REPORT_PATH if bar_minutes == 1
+                else REPORT_PATH.with_name(f"walkforward_{bar_minutes}m_last.json"))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(report, indent=2, ensure_ascii=False),
+                        encoding="utf-8")
     return report
 
 
@@ -310,8 +346,9 @@ def format_telegram_summary(report: Dict[str, Any]) -> str:
     if report.get("error"):
         return f"🔬 <b>Walk-Forward Koşusu</b>\n❌ {report['error']}"
     o = report["ozet"]
+    bm = report["params"].get("bar_minutes", 1)
     lines = [
-        "🔬 <b>Gece Araştırma Koşusu — Walk-Forward</b>",
+        f"🔬 <b>Araştırma Koşusu — Walk-Forward{f' [{bm}m ÇERÇEVE]' if bm > 1 else ''}</b>",
         f"({report['params']['window_days']}g pencere → {report['params']['oos_days']}g "
         f"görülmemiş gelecek, {o['fold_sayisi']} katman, {report['duration_min']} dk)",
         "",
